@@ -152,3 +152,7 @@ prompts/        LLM Prompt 組裝
 routers/        對外 API
 scripts/        CLI 工具（跑 pipeline、建索引、選型比較等）
 ```
+
+## License
+
+本專案採用 [MIT License](LICENSE)：可以自由使用、修改、散布，包含商業用途，唯一要求是保留原始的版權聲明。
