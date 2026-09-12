@@ -1,0 +1,41 @@
+# ============================================================
+# 模型設定檔（Embedding / LLM / VLM 目前選用的 provider 與模型）
+#
+# 這份設定檔會被版本控制追蹤，修改這裡即可切換模型，
+# 不需要改動任何程式碼。機密設定（API Key）不要寫在這裡，
+# 請寫在 .env（參考 .env.example）。
+# ============================================================
+
+embedding:
+  # 可選值：mock / sentence_transformer / openai / clip / siglip
+  # 預設使用本地模型 BAAI/bge-m3，完全不依賴外部 API。
+  # 這是「純文字」embedding，供知識庫（SOP 文件）檢索使用。
+  provider: sentence_transformer
+  model: BAAI/bge-m3
+
+visual_embedding:
+  # 可選值：mock / clip / siglip（純文字 provider 如 sentence_transformer
+  # 不支援圖片，不能填在這裡）。
+  # 用於「視覺相似度檢索」：把裁切後的事件畫面轉成視覺特徵向量，
+  # 拿去比對歷史事件，跟上面 embedding（純文字）是分開的向量空間，
+  # 不能共用同一個 provider。
+  provider: clip
+  model: openai/clip-vit-base-patch32
+
+llm:
+  # 可選值：mock / openai / ollama
+  # 選型測試（scripts/compare_vlm_llm_candidates.py）比較過 qwen3:4b 與
+  # gemma3:4b：兩者輸出品質相當，但 qwen3:4b 預設會開啟思考模式，在這台
+  # 4GB VRAM 的機器上耗時 340 秒／次，gemma3:4b 只要 34 秒，因此選用
+  # gemma3:4b。需要先啟動 Ollama 服務並 `ollama pull gemma3:4b`。
+  provider: ollama
+  model: gemma3:4b
+
+vlm:
+  # 可選值：mock / qwen2.5-vl / internvl / llava / minicpm_v / ollama
+  # 選型測試（scripts/compare_vlm_llm_candidates.py）比較過 qwen2.5vl:3b 與
+  # minicpm-v：qwen2.5vl:3b 速度快了近一倍，且正確描述出畫面中的方向性
+  # 異常，minicpm-v 描述較籠統、也沒抓到異常，因此選用 qwen2.5vl:3b。
+  # 需要先啟動 Ollama 服務並 `ollama pull qwen2.5vl:3b`。
+  provider: ollama
+  model: qwen2.5vl:3b

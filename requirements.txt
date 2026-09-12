@@ -1,0 +1,68 @@
+# ============================================================
+# 推論端（VLM + RAG + LLM）專案相依套件
+# Python 版本需求：3.12
+# ============================================================
+
+# ---------- Web API 框架 ----------
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+
+# ---------- LLM / RAG 框架 ----------
+langchain>=0.3.0
+langchain-openai>=0.2.0
+langchain-community>=0.3.0
+langchain-text-splitters>=0.3.0  # rag/chunking/recursive_chunker.py 使用
+
+# ---------- 向量資料庫 ----------
+chromadb>=0.5.0
+
+# ---------- Embedding（本地模型，預設 Provider） ----------
+# embedding/sentence_transformer.py 使用，預設模型 BAAI/bge-m3
+# 注意：會連帶安裝 torch，體積較大，屬於本專案「完全採用 Local AI」的核心相依套件
+sentence-transformers>=3.0.0
+
+# ---------- CLIP 視覺 Embedding（embedding/clip.py 使用） ----------
+# 用於視覺相似度檢索（把畫面裁切區域轉成視覺特徵向量）。
+# transformers 已經是 sentence-transformers 的間接依賴，這裡明確列出，
+# 因為 embedding/clip.py 直接 import CLIPModel/CLIPProcessor。
+transformers>=4.41.0
+
+# ---------- Ollama（本地 LLM/VLM 執行服務，llm/ollama_llm.py、vlm/ollama_vlm.py 使用） ----------
+# 透過 HTTP API 呼叫本地跑的 Ollama 服務，requests 已是 huggingface_hub 的
+# 間接依賴，這裡明確列出，因為這兩個 Provider 直接 import requests。
+requests>=2.32.0
+
+# ---------- OpenAI 官方 SDK（可選，非預設） ----------
+# 僅在 config.yaml 把 embedding/llm/vlm 的 provider 切成 "openai" 時才需要，
+# 本專案預設不依賴 OpenAI API
+openai>=1.50.0
+
+# ---------- 設定管理 ----------
+pydantic>=2.9.0
+pydantic-settings>=2.5.0
+pyyaml>=6.0  # 讀取 config.yaml（config/yaml_config.py 使用）
+python-dotenv>=1.0.0  # 讓 .env 的變數也寫進 os.environ（config/settings.py 使用）
+
+# ---------- 資料庫 ORM ----------
+# 用於落地儲存 events / analysis_results / alerts / feedback
+sqlalchemy>=2.0.0
+
+# ---------- 圖片處理 ----------
+# 之後 FrameLoaderService 依 spatial_bbox 裁切畫面時會用到
+pillow>=10.4.0
+
+# ---------- 知識庫文件載入（rag/loaders/ 使用） ----------
+# pypdf：rag/loaders/pdf_loader.py 逐頁擷取 PDF 文字
+# beautifulsoup4 + lxml：抓取法規全文（law.moj.gov.tw 等網頁）時解析 HTML 用，
+# 不是正式 pipeline 的一部分，但整理知識庫來源文件時需要
+pypdf>=5.0.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# ============================================================
+# TODO：之後依實際開發需求再加入
+#   - alembic          （資料庫 schema migration）
+#   - pytest / pytest-asyncio（單元測試 / 整合測試）
+#   - python-multipart （若 API 需要接收檔案上傳）
+#   - httpx             （測試 FastAPI 端點用）
+# ============================================================
