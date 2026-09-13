@@ -12,9 +12,11 @@ TODO：
 - [ ] 定義 request body 的 Pydantic schema（is_correct, corrected_content）
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-router = APIRouter(prefix="/events", tags=["feedback"])
+from app.security import verify_api_key
+
+router = APIRouter(prefix="/events", tags=["feedback"], dependencies=[Depends(verify_api_key)])
 
 
 @router.post("/{record_id}/feedback")

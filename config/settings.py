@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     openai_llm_model: str = "gpt-4o-mini"                   # 僅 provider="openai" 時使用
     openai_embedding_model: str = "text-embedding-3-small"  # 1536 維，僅 provider="openai" 時使用
 
+    # ---------- 對外 API 身份驗證 ----------
+    # /events/ingest 等端點會觸發真的 VLM/LLM 運算（單次 70-90 秒），
+    # 沒有身份驗證的話任何人都能無限次呼叫耗盡運算資源，見
+    # app/security.py。刻意不給預設值：沒有明確設定就該直接拒絕啟用
+    # 服務，而不是安靜地放行所有請求。
+    inference_api_key: str = ""
+
     # ---------- Ollama（本地 LLM/VLM 執行服務）設定 ----------
     # llm/ollama_llm.py、vlm/ollama_vlm.py 共用，透過 HTTP API 呼叫本地跑的
     # Ollama 服務（例如 Qwen3 / Gemma3 / Qwen2.5-VL / MiniCPM-V），

@@ -23,10 +23,11 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import ValidationError
 
 from app.dependencies import get_orchestrator_service
+from app.security import verify_api_key
 from services.orchestrator_service import OrchestratorService
 from services.schemas import PipelineOutput
 
-router = APIRouter(prefix="/events", tags=["events"])
+router = APIRouter(prefix="/events", tags=["events"], dependencies=[Depends(verify_api_key)])
 
 
 @router.post("/ingest", response_model=PipelineOutput)

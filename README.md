@@ -109,6 +109,8 @@ python scripts/run_pipeline.py --input data/dataset7_demo_event.json --index 0
 
 ### 方式二：真的透過 HTTP API
 
+先在 `.env` 設定 `INFERENCE_API_KEY`（見 `.env.example`），沒設定的話伺服器會直接拒絕請求：
+
 ```bash
 uvicorn app.main:app --reload
 ```
@@ -116,6 +118,7 @@ uvicorn app.main:app --reload
 ```bash
 curl -X POST http://127.0.0.1:8000/events/ingest \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <.env 裡設定的 INFERENCE_API_KEY>" \
   -d @<單筆事件的 JSON 檔案>
 ```
 
@@ -140,10 +143,11 @@ python scripts/index_knowledge_base.py
 
 ## 安全性注意事項
 
-`POST /events/ingest` 目前**沒有任何身份驗證機制**，部署前務必加上（API Key／JWT 等）＋流量限制，原因：
+`events` / `alerts` 底下的端點都已經掛上 API Key 驗證（`app/security.py`，Header 帶 `X-API-Key`，未設定 `INFERENCE_API_KEY` 時伺服器直接拒絕啟用服務），但這只解決「陌生人完全無法呼叫」的問題，以下兩點仍然存在、需要留意：
 
-- **Prompt injection**：`caption`／`predicted_event_type` 是完全開放的自由文字欄位，會直接拼進 LLM 的 prompt（`prompts/reasoning_prompt.py`）。未經驗證的呼叫者可以在這些欄位塞入指令性文字，試圖操控 LLM 輸出的 `summary`／`possible_causes`／`recommendation` 內容。`alert_level`（警報等級）是純規則邏輯決定（`services/alert_service.py`），不吃 LLM 輸出，不受影響，但顯示給人看的說明文字有可能被操控。
-- **資源耗盡型 DoS**：單次請求會真的觸發 VLM＋LLM 運算（實測 70–90 秒），沒有驗證與流量限制的情況下，任何人都可以用很少的請求把運算資源（GPU／CPU）耗光。
+- **Prompt injection**：`caption`／`predicted_event_type` 是完全開放的自由文字欄位，會直接拼進 LLM 的 prompt（`prompts/reasoning_prompt.py`）。就算呼叫者持有合法的 API Key，仍然可以在這些欄位塞入指令性文字，試圖操控 LLM 輸出的 `summary`／`possible_causes`／`recommendation` 內容。`alert_level`（警報等級）是純規則邏輯決定（`services/alert_service.py`），不吃 LLM 輸出，不受影響，但顯示給人看的說明文字有可能被操控。
+- **沒有流量限制**：單次請求會真的觸發 VLM＋LLM 運算（實測 70–90 秒），API Key 只能擋掉「沒有 Key 的人」，持有合法 Key 的呼叫端（或 Key 外流）仍然可以用很少的請求把運算資源（GPU／CPU）耗光，沒有 rate limiting 機制。
+- **單一共用 Key，不是多租戶權限系統**：目前所有端點共用同一組 `INFERENCE_API_KEY`，沒有「不同呼叫端拿不同權限」的概念，正式上線前應該視情況換成每個呼叫端各自的 Key 或更完整的驗證機制（OAuth／JWT）。
 
 另外，`services/frame_service.py` 的 `frame_file` 讀取路徑已修正過路徑穿越（path traversal）漏洞——過去 `frame_file` 若帶入絕對路徑或 `../` 相對路徑，可能被用來讀取伺服器上任意檔案，現在會驗證解析後的路徑是否仍落在 `frames_dir` 底下，超出範圍一律拒絕。
 

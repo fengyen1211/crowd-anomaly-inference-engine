@@ -12,9 +12,11 @@ TODO：
       避免 Web 需要一直輪詢
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-router = APIRouter(prefix="/alerts", tags=["alerts"])
+from app.security import verify_api_key
+
+router = APIRouter(prefix="/alerts", tags=["alerts"], dependencies=[Depends(verify_api_key)])
 
 
 @router.get("")
