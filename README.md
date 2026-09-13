@@ -138,6 +138,15 @@ python scripts/index_knowledge_base.py
 - **3B 級量化模型偶爾會誤判場景類型**（例如把劇院走道誤判成停車場），這是硬體限制（4GB VRAM 只能塞 3B 級模型）下的模型容量問題，不是資料處理問題。
 - 目前所有驗證都基於 3D 渲染的示範影片，尚未在真實監控畫面上測試過。
 
+## 安全性注意事項
+
+`POST /events/ingest` 目前**沒有任何身份驗證機制**，部署前務必加上（API Key／JWT 等）＋流量限制，原因：
+
+- **Prompt injection**：`caption`／`predicted_event_type` 是完全開放的自由文字欄位，會直接拼進 LLM 的 prompt（`prompts/reasoning_prompt.py`）。未經驗證的呼叫者可以在這些欄位塞入指令性文字，試圖操控 LLM 輸出的 `summary`／`possible_causes`／`recommendation` 內容。`alert_level`（警報等級）是純規則邏輯決定（`services/alert_service.py`），不吃 LLM 輸出，不受影響，但顯示給人看的說明文字有可能被操控。
+- **資源耗盡型 DoS**：單次請求會真的觸發 VLM＋LLM 運算（實測 70–90 秒），沒有驗證與流量限制的情況下，任何人都可以用很少的請求把運算資源（GPU／CPU）耗光。
+
+另外，`services/frame_service.py` 的 `frame_file` 讀取路徑已修正過路徑穿越（path traversal）漏洞——過去 `frame_file` 若帶入絕對路徑或 `../` 相對路徑，可能被用來讀取伺服器上任意檔案，現在會驗證解析後的路徑是否仍落在 `frames_dir` 底下，超出範圍一律拒絕。
+
 ## 專案結構
 
 ```
