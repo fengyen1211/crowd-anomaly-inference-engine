@@ -26,6 +26,8 @@ TODO：
 - [ ] frame_service 讀不到畫面檔案時的降級策略（目前會直接讓例外往上拋）
 """
 
+from typing import List, Optional
+
 from embedding.base import BaseEmbeddingProvider
 from llm.reasoning_pipeline import ReasoningPipeline
 from rag.schemas import RetrievedContext
@@ -36,6 +38,7 @@ from services.frame_service import FrameLoaderService
 from services.ingestion_service import IngestionService
 from services.schemas import PipelineOutput
 from utils.logger import get_logger
+from utils.schemas import RawEventRecord
 from vlm.base import BaseVLM
 from vlm.observation_builder import VLMObservationBuilder
 
@@ -90,9 +93,12 @@ class OrchestratorService:
         # 2. Frame Loader：讀取畫面並依 bbox 裁切出感興趣區域
         full_frame = self._frame_service.load_full_frame(record)
         cropped_frame = self._frame_service.crop_bbox(full_frame, record.spatial_bbox)
+        context_frames = self._load_context_frames(record)
 
         # 3. VLM：描述畫面內容，組成業務層需要的 VLMObservation
-        vlm_observation = VLMObservationBuilder.build(self._vlm_client, cropped_frame, record)
+        vlm_observation = VLMObservationBuilder.build(
+            self._vlm_client, cropped_frame, record, context_images=context_frames
+        )
 
         # 4. Embedding：
         #    - 視覺向量：直接對「裁切後的畫面」算 CLIP/SigLIP embedding，
@@ -135,3 +141,22 @@ class OrchestratorService:
             recommendation=analysis_result.recommended_actions,
             alert_level=alert.severity,
         )
+
+    def _load_context_frames(self, record: RawEventRecord) -> Optional[List[bytes]]:
+        """
+        讀取＋裁切 before_frame_file／after_frame_file（若有）。
+
+        兩者跟主要畫面共用同一個 spatial_bbox（同機位、同座標，只是時間點
+        不同），所以套用一樣的 crop_bbox() 裁切邏輯。目前只有 panic_scatter
+        ／counter_flow 這類需要跨時間比對的事件類型會帶這兩個欄位，其餘
+        事件類型這裡會回傳 None，VLM 那端沿用單張畫面的原有流程。
+        """
+        frame_files = [f for f in (record.before_frame_file, record.after_frame_file) if f]
+        if not frame_files:
+            return None
+
+        context_frames = []
+        for frame_file in frame_files:
+            full_frame = self._frame_service.load_context_frame(frame_file, record.record_id)
+            context_frames.append(self._frame_service.crop_bbox(full_frame, record.spatial_bbox))
+        return context_frames

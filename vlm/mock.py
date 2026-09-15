@@ -40,10 +40,17 @@ class MockVLM(BaseVLM):
         logger.info("MockVLM.load_model()：no-op，未載入任何真實模型")
         self._is_loaded = True
 
-    def describe_image(self, image: bytes, prompt: Optional[str] = None) -> str:
+    def describe_image(
+        self,
+        image: bytes,
+        prompt: Optional[str] = None,
+        context_images: Optional[List[bytes]] = None,
+    ) -> str:
         self._ensure_loaded()
         digest = hashlib.sha256(image).hexdigest()[:8]
         description = f"[MOCK 描述] 這是一張測試圖片（雜湊={digest}）"
+        if context_images:
+            description += f"，另有 {len(context_images)} 張脈絡畫面"
         if prompt:
             description += f"，提示詞：{prompt}"
         return description

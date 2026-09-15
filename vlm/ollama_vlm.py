@@ -55,18 +55,31 @@ class OllamaVLM(BaseVLM):
         self._is_loaded = True
         logger.info("OllamaVLM 就緒：model=%s（實際權重由 Ollama 服務於首次請求時載入）", self._model)
 
-    def describe_image(self, image: bytes, prompt: Optional[str] = None) -> str:
+    def describe_image(
+        self,
+        image: bytes,
+        prompt: Optional[str] = None,
+        context_images: Optional[List[bytes]] = None,
+    ) -> str:
         if not self._is_loaded:
             raise RuntimeError("尚未呼叫 load_model()，請先載入模型再使用")
 
-        image_b64 = base64.b64encode(image).decode("ascii")
+        # Ollama 的 chat API 一個 message 可以帶多張圖片（Qwen2.5-VL 等
+        # 多模態模型支援一次看多張圖），context_images 依序接在主要畫面
+        # 後面，順序跟 prompt 文字裡的說明（例如「第一張...第二張...」）
+        # 要對得上，由呼叫端（vlm/observation_builder.py）負責組出對應的
+        # prompt 文字。
+        images_b64 = [base64.b64encode(image).decode("ascii")]
+        if context_images:
+            images_b64.extend(base64.b64encode(img).decode("ascii") for img in context_images)
+
         payload = {
             "model": self._model,
             "messages": [
                 {
                     "role": "user",
                     "content": prompt or "請描述這張圖片的內容。",
-                    "images": [image_b64],
+                    "images": images_b64,
                 }
             ],
             "stream": False,

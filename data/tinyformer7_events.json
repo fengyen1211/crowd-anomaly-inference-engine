@@ -315,6 +315,8 @@
       "member_count": 307,
       "frame_file": "tinyformer7_sprint_spike_frame_00487.jpg",
       "frame_idx": 487,
+      "before_frame_file": null,
+      "after_frame_file": null,
       "spatial_bbox": [
         498.4530334472656,
         567.8296508789062,
@@ -876,6 +878,8 @@
       "member_count": 24,
       "frame_file": "tinyformer7_crowd_locked_frame_00957.jpg",
       "frame_idx": 957,
+      "before_frame_file": null,
+      "after_frame_file": null,
       "spatial_bbox": [
         685.60107421875,
         242.86119079589844,
@@ -1430,6 +1434,8 @@
       "member_count": 17,
       "frame_file": "tinyformer7_panic_scatter_frame_00433.jpg",
       "frame_idx": 433,
+      "before_frame_file": "tinyformer7_context_before.jpg",
+      "after_frame_file": "tinyformer7_context_after.jpg",
       "spatial_bbox": [
         625.931640625,
         245.3623809814453,
@@ -1972,6 +1978,8 @@
       "member_count": 5,
       "frame_file": "tinyformer7_counter_flow_frame_00605.jpg",
       "frame_idx": 605,
+      "before_frame_file": "tinyformer7_context_before.jpg",
+      "after_frame_file": "tinyformer7_context_after.jpg",
       "spatial_bbox": [
         679.423828125,
         268.3129577636719,

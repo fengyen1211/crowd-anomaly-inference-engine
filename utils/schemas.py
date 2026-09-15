@@ -74,6 +74,13 @@ class RawEventRecord(BaseModel):
     frame_file: str
     frame_idx: int
 
+    # 額外的脈絡畫面（同一機位、同一 spatial_bbox 座標，但是事件發生前／後
+    # 的畫面）。只有需要跨時間比對才能判斷的行為類型（目前是 panic_scatter／
+    # counter_flow，見 scripts/build_tinyformer_events.py）才會帶這兩個欄位，
+    # 其餘事件類型維持 None，VLM 沿用單張畫面的原有流程。
+    before_frame_file: Optional[str] = None
+    after_frame_file: Optional[str] = None
+
     # 注意：影像端實際輸出的是扁平陣列 [x1, y1, x2, y2]，不是具名物件，
     # 已對照 rag_vlm_mock_dataset.json 核對過。
     spatial_bbox: List[float] = Field(..., min_length=4, max_length=4)

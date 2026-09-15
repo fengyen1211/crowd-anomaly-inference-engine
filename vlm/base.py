@@ -46,7 +46,12 @@ class BaseVLM(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def describe_image(self, image: bytes, prompt: Optional[str] = None) -> str:
+    def describe_image(
+        self,
+        image: bytes,
+        prompt: Optional[str] = None,
+        context_images: Optional[List[bytes]] = None,
+    ) -> str:
         """
         輸入圖片，回傳模型生成的文字描述。
 
@@ -54,6 +59,11 @@ class BaseVLM(ABC):
             image: 圖片的二進位資料。
             prompt: 可選的引導提示詞（例如「請描述這群人在做什麼」），
                     不同模型對 prompt 的支援程度可能不同。
+            context_images: 額外的脈絡畫面（例如事件發生前／後的同機位畫面），
+                    用於需要跨時間比對才能判斷的行為類型（目前是
+                    panic_scatter／counter_flow，見
+                    vlm/observation_builder.py）。不支援多圖輸入的模型
+                    可以忽略這個參數，只用 image 生成描述。
         """
         raise NotImplementedError
 

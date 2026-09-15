@@ -56,6 +56,19 @@ services/frame_service.py::crop_bbox() 依 spatial_bbox 外擴 padding
 這支腳本另外呼叫同一個 crop_bbox() 存一份 `*_cropped_preview.jpg`
 （不會被 pipeline 讀取，純供人工檢視用）。
 
+panic_scatter／counter_flow 的事件前後脈絡畫面
+--------------------------------------------
+`panic_scatter`（人群四散）、`counter_flow`（逆向流動）本質上是「隨時間
+變化」的行為，但 TinyFormer+SAM2 只給 z-score／密度這種瞬時強度數值，
+沒有方向角度，VLM 又只看 DURING 單一靜態幀，看不出「四散」「反向」這種
+需要前後對照才能判斷的動態。因此這兩類事件額外帶上 `before_frame_file`／
+`after_frame_file`：取 `7_clean/.../BEFORE` 裡最接近 DURING 開始的最後一幀、
+`AFTER` 裡最接近 DURING 結束的第一幀（同機位、同 `spatial_bbox` 座標，只是
+時間點不同），讓 VLM 能比較事件前中後的畫面差異（見
+vlm/observation_builder.py 的 prompt 組裝邏輯）。其餘兩類事件
+（`sprint_spike`／`crowd_locked`）沒有這個時間比對的需求，維持原本單張
+畫面的流程，這兩個欄位留 `None`。
+
 使用方式（在 project/ 目錄下執行）：
     python scripts/build_tinyformer_events.py
 
@@ -82,10 +95,17 @@ from services.frame_service import FrameLoaderService  # noqa: E402
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _SOURCE_DIR = _PROJECT_ROOT / "0901"
 _SOURCE_JSON = _SOURCE_DIR / "tinyformer_events_7.json"
-_CLEAN_FRAMES_DIR = _PROJECT_ROOT / "7_clean" / "tinyformer_clean_dataset_7" / "DURING"
+_CLEAN_DATASET_DIR = _PROJECT_ROOT / "7_clean" / "tinyformer_clean_dataset_7"
+_CLEAN_FRAMES_DIR = _CLEAN_DATASET_DIR / "DURING"
+_BEFORE_FRAMES_DIR = _CLEAN_DATASET_DIR / "BEFORE"
+_AFTER_FRAMES_DIR = _CLEAN_DATASET_DIR / "AFTER"
 _OUTPUT_PATH = Path(__file__).resolve().parent.parent / "data" / "tinyformer7_events.json"
 
+# 需要「事件前後對照畫面」才能判斷的行為類型，見上方docstring。
+_CONTEXT_FRAME_TYPES = {"panic_scatter", "counter_flow"}
+
 _EVENT_TYPE_RE = re.compile(r"^([a-z_]+)(?:\(([a-z]+)=([-0-9.]+)\))?$")
+_FRAME_ID_RE = re.compile(r"frame_(\d+)\.jpg$")
 
 _CAPTION_TEMPLATE = (
     "【TinyFormer+SAM2 影像端偵測，聚合自逐幀原始訊號，非人工標註】"
@@ -173,6 +193,31 @@ def _load_clean_frame(peak_frame_id: int) -> bytes:
     return source_path.read_bytes()
 
 
+def _find_boundary_frame(directory: Path, pick_max: bool) -> Path:
+    """
+    BEFORE 資料夾取最接近 DURING 開始的最後一幀（pick_max=True）；
+    AFTER 資料夾取最接近 DURING 結束的第一幀（pick_max=False）。
+    """
+    candidates = [
+        (int(match.group(1)), path)
+        for path in directory.glob("frame_*.jpg")
+        if (match := _FRAME_ID_RE.search(path.name))
+    ]
+    if not candidates:
+        raise SystemExit(f"找不到任何畫面檔案：{directory}")
+    picker = max if pick_max else min
+    return picker(candidates, key=lambda c: c[0])[1]
+
+
+def _save_context_frame(kind: str, source_path: Path, frames_dir: Path) -> str:
+    """存 panic_scatter／counter_flow 共用的事件前／後脈絡畫面（只存一份，
+    兩個事件類型的 record 都指向同一個檔案）。"""
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    dest_filename = f"tinyformer7_context_{kind}.jpg"
+    (frames_dir / dest_filename).write_bytes(source_path.read_bytes())
+    return dest_filename
+
+
 def _save_peak_frame(base_type: str, peak_frame_id: int, frame_bytes: bytes, frames_dir: Path) -> str:
     frames_dir.mkdir(parents=True, exist_ok=True)
     dest_filename = f"tinyformer7_{base_type}_frame_{peak_frame_id:05d}.jpg"
@@ -207,9 +252,19 @@ def main() -> None:
     if not _CLEAN_FRAMES_DIR.exists():
         raise SystemExit(f"找不到乾淨畫面資料夾：{_CLEAN_FRAMES_DIR}")
 
+    before_source_path = _find_boundary_frame(_BEFORE_FRAMES_DIR, pick_max=True)
+    after_source_path = _find_boundary_frame(_AFTER_FRAMES_DIR, pick_max=False)
+    before_frame_file = _save_context_frame("before", before_source_path, frames_dir)
+    after_frame_file = _save_context_frame("after", after_source_path, frames_dir)
+
     records = []
     print(f"來源：{_SOURCE_JSON}（共 {len(prompts)} 筆逐幀原始訊號，聚合成 {len(grouped)} 筆事件）")
-    print(f"乾淨畫面：{_CLEAN_FRAMES_DIR}\n")
+    print(f"乾淨畫面：{_CLEAN_FRAMES_DIR}")
+    print(
+        f"事件前後脈絡畫面（僅 {sorted(_CONTEXT_FRAME_TYPES)} 使用）："
+        f"before={before_source_path.name}->{before_frame_file}，"
+        f"after={after_source_path.name}->{after_frame_file}\n"
+    )
 
     for base_type, items in sorted(grouped.items(), key=lambda kv: -len(kv[1])):
         peak = _pick_peak_instance(items)
@@ -227,6 +282,7 @@ def main() -> None:
             base_type, peak_frame_id, frame_bytes, bbox, frames_dir, frame_loader
         )
 
+        has_context = base_type in _CONTEXT_FRAME_TYPES
         record = {
             "record_id": f"tinyformer7_{base_type}",
             "group_id": "tinyformer7_video7_during",
@@ -234,6 +290,8 @@ def main() -> None:
             "member_count": len(members),
             "frame_file": dest_filename,
             "frame_idx": peak_frame_id,
+            "before_frame_file": before_frame_file if has_context else None,
+            "after_frame_file": after_frame_file if has_context else None,
             "spatial_bbox": bbox,
             "predicted_event_type": base_type,
             "label_source": "tinyformer_sam2_zscore_unvalidated",
@@ -247,10 +305,11 @@ def main() -> None:
         }
         records.append(record)
 
+        context_note = "，含事件前後脈絡畫面" if has_context else ""
         print(
             f"[{base_type}] {len(items)} 筆原始訊號 / {len(members)} 人 -> "
             f"代表幀 frame_{peak_frame_id:05d} -> {dest_filename}"
-            f"（裁切預覽 {preview_filename}，{preview_size[0]}x{preview_size[1]}）"
+            f"（裁切預覽 {preview_filename}，{preview_size[0]}x{preview_size[1]}）{context_note}"
         )
 
     _OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)

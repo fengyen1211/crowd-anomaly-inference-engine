@@ -50,8 +50,21 @@ class FrameLoaderService:
             FileNotFoundError: frames_dir 底下找不到對應檔案時，
                                明確報錯而不是靜默回傳空資料。
         """
+        return self._load_frame_file(event_record.frame_file, record_id=event_record.record_id)
+
+    def load_context_frame(self, frame_file: str, record_id: str) -> bytes:
+        """
+        讀取事件的額外脈絡畫面（RawEventRecord.before_frame_file／
+        after_frame_file），跟 load_full_frame() 共用同一套路徑驗證邏輯。
+
+        Raises:
+            FileNotFoundError: 同 load_full_frame()。
+        """
+        return self._load_frame_file(frame_file, record_id=record_id)
+
+    def _load_frame_file(self, frame_file: str, record_id: str) -> bytes:
         frames_dir = self._frames_dir.resolve()
-        frame_path = (frames_dir / event_record.frame_file).resolve()
+        frame_path = (frames_dir / frame_file).resolve()
 
         # frame_file 是從外部 JSON（/events/ingest 是公開端點，未驗證身份）
         # 直接吃進來的字串，未經檢查。pathlib 的 "/" 對絕對路徑會直接蓋掉
@@ -60,14 +73,14 @@ class FrameLoaderService:
         # 檢查是否仍落在 frames_dir 底下，避免任意檔案讀取。
         if not frame_path.is_relative_to(frames_dir):
             raise FileNotFoundError(
-                f"畫面檔案路徑不合法（超出 frames_dir 範圍）：{event_record.frame_file}"
-                f"（record_id={event_record.record_id}）"
+                f"畫面檔案路徑不合法（超出 frames_dir 範圍）：{frame_file}"
+                f"（record_id={record_id}）"
             )
 
         if not frame_path.exists():
             raise FileNotFoundError(
                 f"找不到畫面檔案：{frame_path}"
-                f"（record_id={event_record.record_id}，frames_dir={frames_dir}）"
+                f"（record_id={record_id}，frames_dir={frames_dir}）"
             )
 
         logger.info("FrameLoaderService 讀取畫面：%s", frame_path)
