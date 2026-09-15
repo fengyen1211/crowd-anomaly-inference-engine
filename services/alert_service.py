@@ -22,6 +22,12 @@ from utils.schemas import Alert, AlertSeverity, PredictedEventType, RawEventReco
 
 logger = get_logger(__name__)
 
+# 「恐慌性移動」在不同影像端格式下的命名不同：舊版規則系統輸出
+# PredictedEventType.PANIC_DISPERSAL（"panic_dispersal"），較新的
+# TinyFormer+SAM2 逐幀偵測格式輸出 "panic_scatter"——語意相同（人群
+# 突然加速、四散），但字串不同，比對時兩者都要算。
+_PANIC_EVENT_TYPES = {PredictedEventType.PANIC_DISPERSAL.value, "panic_scatter"}
+
 
 class AlertComposerService:
     """
@@ -67,7 +73,7 @@ class AlertComposerService:
 
         規則（由上而下依序判斷，符合就回傳，不繼續往下比對）：
         1. 規則系統的判斷被 LLM 推翻（overturned）-> 原本的異常判斷不成立 -> info
-        2. panic_dispersal（恐慌性移動）且信心夠高 -> 影響人身安全風險最高 -> critical
+        2. 恐慌性移動（見 _PANIC_EVENT_TYPES）且信心夠高 -> 影響人身安全風險最高 -> critical
         3. 判斷維持成立（confirmed）且信心夠高 -> warning
         4. 其餘情況（uncertain、信心不足...）-> info，避免誤報造成不必要的恐慌
         """
@@ -75,7 +81,7 @@ class AlertComposerService:
             return AlertSeverity.INFO
 
         if (
-            event_record.predicted_event_type == PredictedEventType.PANIC_DISPERSAL
+            event_record.predicted_event_type in _PANIC_EVENT_TYPES
             and analysis_result.final_confidence >= 0.7
         ):
             return AlertSeverity.CRITICAL
