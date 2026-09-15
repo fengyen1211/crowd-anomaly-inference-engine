@@ -28,8 +28,10 @@ counter_flow）聚合成 4 筆事件，每一筆代表「這支影片裡這種�
 
 哪些欄位是真的、哪些是誠實的佔位值
 ------------------------------------
-- frame_file／frame_idx／畫面內容：真的（複製自 0901/tinyformer_dataset_7
-  的實際幀）
+- frame_file／frame_idx／畫面內容：真的，但**不是**從 0901/tinyformer_dataset_7
+  複製（那批是影像端已疊加 bbox／軌跡線／文字標籤的渲染輸出，VLM 會把標註
+  誤認成畫面內容，見下方「畫面來源修正」）。實際是從乾淨的
+  7_clean/tinyformer_clean_dataset_7/DURING 讀取
 - member_ids／spatial_bbox／predicted_event_type：真的，來自 TinyFormer+SAM2
   的實際輸出（聚合方式見上）
 - embedding：真的，用 embedding/clip.py 現場算出代表幀的 CLIP 向量
@@ -39,6 +41,21 @@ counter_flow）聚合成 4 筆事件，每一筆代表「這支影片裡這種�
 - confidence：0.0（沿用專案慣例，這個欄位目前系統邏輯不讀取，真正的強度
   資訊已經寫進 caption 讓 LLM 看得到）
 
+畫面來源修正：乾淨幀 + padding 裁切預覽
+--------------------------------------------
+影像端後來提供了 7_clean/tinyformer_clean_dataset_7/DURING：跟
+0901/tinyformer_dataset_7/DURING（疊加標註版）同一份 30fps 輸出、逐幀一一
+對應的 frame_id，只是沒有畫 bbox／軌跡線／文字標籤，所以可以直接用
+tinyformer_events_7.json 裡的 frame_id 去這個資料夾找對應畫面，不需要
+（也不再需要之前用 0901/7.mp4 時做的）24fps/30fps 時間戳換算。
+
+另外，實際送進 VLM 的畫面不是這裡存的完整乾淨幀，而是 pipeline 執行時由
+services/frame_service.py::crop_bbox() 依 spatial_bbox 外擴 padding
+（3 倍寬高、最小 100px）裁出來的範圍——這一步在系統裡是全域生效的，不需要
+在這支腳本裡重做。但為了能像除錯時那樣人工檢查「VLM 實際看到什麼」，
+這支腳本另外呼叫同一個 crop_bbox() 存一份 `*_cropped_preview.jpg`
+（不會被 pipeline 讀取，純供人工檢視用）。
+
 使用方式（在 project/ 目錄下執行）：
     python scripts/build_tinyformer_events.py
 
@@ -46,6 +63,7 @@ counter_flow）聚合成 4 筆事件，每一筆代表「這支影片裡這種�
 可直接被 scripts/run_pipeline.py --input ... --index 0~3 使用）
 """
 
+import io
 import json
 import re
 import sys
@@ -59,11 +77,12 @@ from PIL import Image  # noqa: E402
 
 from app.dependencies import get_visual_embedding_client  # noqa: E402
 from config.settings import get_settings  # noqa: E402
+from services.frame_service import FrameLoaderService  # noqa: E402
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _SOURCE_DIR = _PROJECT_ROOT / "0901"
 _SOURCE_JSON = _SOURCE_DIR / "tinyformer_events_7.json"
-_FRAMES_SOURCE_DIR = _SOURCE_DIR / "tinyformer_dataset_7" / "DURING"
+_CLEAN_FRAMES_DIR = _PROJECT_ROOT / "7_clean" / "tinyformer_clean_dataset_7" / "DURING"
 _OUTPUT_PATH = Path(__file__).resolve().parent.parent / "data" / "tinyformer7_events.json"
 
 _EVENT_TYPE_RE = re.compile(r"^([a-z_]+)(?:\(([a-z]+)=([-0-9.]+)\))?$")
@@ -146,16 +165,35 @@ def _build_caption(base_type: str, items: List[Dict[str, Any]], peak: Dict[str, 
     )
 
 
-def _copy_peak_frame(base_type: str, peak_frame_id: int, frames_dir: Path) -> str:
-    source_path = _FRAMES_SOURCE_DIR / f"frame_{peak_frame_id:05d}.jpg"
+def _load_clean_frame(peak_frame_id: int) -> bytes:
+    """從乾淨（無疊加標註）的 DURING 畫面資料夾讀取跟標註版一一對應的 frame_id。"""
+    source_path = _CLEAN_FRAMES_DIR / f"frame_{peak_frame_id:05d}.jpg"
     if not source_path.exists():
-        raise SystemExit(f"找不到代表幀畫面：{source_path}")
+        raise SystemExit(f"找不到乾淨代表幀畫面：{source_path}")
+    return source_path.read_bytes()
 
+
+def _save_peak_frame(base_type: str, peak_frame_id: int, frame_bytes: bytes, frames_dir: Path) -> str:
     frames_dir.mkdir(parents=True, exist_ok=True)
     dest_filename = f"tinyformer7_{base_type}_frame_{peak_frame_id:05d}.jpg"
-    dest_path = frames_dir / dest_filename
-    dest_path.write_bytes(source_path.read_bytes())
+    (frames_dir / dest_filename).write_bytes(frame_bytes)
     return dest_filename
+
+
+def _save_cropped_preview(
+    base_type: str,
+    peak_frame_id: int,
+    frame_bytes: bytes,
+    bbox: List[float],
+    frames_dir: Path,
+    frame_loader: FrameLoaderService,
+) -> Tuple[str, Tuple[int, int]]:
+    """存一份跟 pipeline 執行時同樣邏輯（含 padding）裁切出來的預覽圖，供人工檢查
+    「VLM 實際看到的畫面」是否可辨識——不會被 pipeline 讀取。"""
+    cropped = frame_loader.crop_bbox(frame_bytes, bbox)
+    preview_filename = f"tinyformer7_{base_type}_frame_{peak_frame_id:05d}_cropped_preview.jpg"
+    (frames_dir / preview_filename).write_bytes(cropped)
+    return preview_filename, Image.open(io.BytesIO(cropped)).size
 
 
 def main() -> None:
@@ -164,21 +202,30 @@ def main() -> None:
 
     frames_dir = Path(get_settings().frames_dir)
     clip = get_visual_embedding_client()
+    frame_loader = FrameLoaderService(frames_dir=str(frames_dir))
+
+    if not _CLEAN_FRAMES_DIR.exists():
+        raise SystemExit(f"找不到乾淨畫面資料夾：{_CLEAN_FRAMES_DIR}")
 
     records = []
-    print(f"來源：{_SOURCE_JSON}（共 {len(prompts)} 筆逐幀原始訊號，聚合成 {len(grouped)} 筆事件）\n")
+    print(f"來源：{_SOURCE_JSON}（共 {len(prompts)} 筆逐幀原始訊號，聚合成 {len(grouped)} 筆事件）")
+    print(f"乾淨畫面：{_CLEAN_FRAMES_DIR}\n")
 
     for base_type, items in sorted(grouped.items(), key=lambda kv: -len(kv[1])):
         peak = _pick_peak_instance(items)
         peak_frame_id = peak["frame_id"]
 
-        dest_filename = _copy_peak_frame(base_type, peak_frame_id, frames_dir)
-        source_path = _FRAMES_SOURCE_DIR / f"frame_{peak_frame_id:05d}.jpg"
-        width, height = Image.open(source_path).size
-        embedding = clip.embed_image([source_path.read_bytes()])[0]
+        frame_bytes = _load_clean_frame(peak_frame_id)
+        dest_filename = _save_peak_frame(base_type, peak_frame_id, frame_bytes, frames_dir)
+        width, height = Image.open(io.BytesIO(frame_bytes)).size
+        embedding = clip.embed_image([frame_bytes])[0]
 
         members = sorted({m for p in items for m in p["member_ids"]})
         bbox = [max(0.0, min(float(c), dim)) for c, dim in zip(peak["visual_prompt_bbox"], [width, height, width, height])]
+
+        preview_filename, preview_size = _save_cropped_preview(
+            base_type, peak_frame_id, frame_bytes, bbox, frames_dir, frame_loader
+        )
 
         record = {
             "record_id": f"tinyformer7_{base_type}",
@@ -200,7 +247,11 @@ def main() -> None:
         }
         records.append(record)
 
-        print(f"[{base_type}] {len(items)} 筆原始訊號 / {len(members)} 人 -> 代表幀 frame_{peak_frame_id:05d}.jpg")
+        print(
+            f"[{base_type}] {len(items)} 筆原始訊號 / {len(members)} 人 -> "
+            f"代表幀 frame_{peak_frame_id:05d} -> {dest_filename}"
+            f"（裁切預覽 {preview_filename}，{preview_size[0]}x{preview_size[1]}）"
+        )
 
     _OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     _OUTPUT_PATH.write_text(json.dumps({"records": records}, ensure_ascii=False, indent=2), encoding="utf-8")
