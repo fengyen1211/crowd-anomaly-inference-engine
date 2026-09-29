@@ -1,0 +1,65 @@
+{
+  "_comment": "人工策展的真實案例，刻意對應影像端的四種行為類型（sprint_spike / crowd_locked / panic_scatter / counter_flow）。跟 knowledge_base_sources_news/ 底下爬蟲產生的記錄格式相同，但多一個 behavior_type 欄位，並由 scripts/clean_news_corpus.py 依 source_url 覆蓋掉爬蟲版本（爬蟲摘要多半只寫死傷數字，沒寫人群動力學機制，對檢索沒有鑑別度）。這個檔案刻意放在 data/ 而不是 knowledge_base_sources_news/ 底下，避免被索引兩次。",
+  "records": [
+    {
+      "incident_type": "crowd_crush",
+      "behavior_type": ["counter_flow"],
+      "headline": "2015 麥加米納踩踏事故：兩股朝聖人流在路口對撞",
+      "summary": "2015年9月24日上午9時（麥加時間），沙烏地阿拉伯米納地區在朝覲期間發生大規模人群擠壓事故。事發地點在通往賈馬拉橋（Jamaraat Bridge）的204街與223街交會路口：一批剛完成「擲石驅魔」儀式、正要離開的朝聖者，與另一批正要前往進行同一儀式的人流，從不同方向匯入同一條街道正面對撞。目擊者指出，206街東段封閉迫使人流改走223街，是造成兩股方向相反的人流在路口交會的直接原因。該路口位於兩個朝聖者營地之間，事前未被列為危險區域。沙烏地官方公布死亡人數為769人、934人受傷，多個獨立統計則認為實際死亡超過2,000人。這起事故是「逆向／對向人流」（counter_flow）致災機制最具代表性的案例：致命因素不是單一方向的人群密度過高，而是兩股人流在受限空間中互相擠壓、任何一方都無法後退。",
+      "event_location": "沙烏地阿拉伯 麥加 米納，204街與223街交會口",
+      "publish_date": "2015-09-24",
+      "source_url": "https://en.wikipedia.org/wiki/2015_Mina_crowd_crush",
+      "source_domain": "en.wikipedia.org"
+    },
+    {
+      "incident_type": "crowd_crush",
+      "behavior_type": ["crowd_locked", "sprint_spike"],
+      "headline": "1943 倫敦貝斯納爾格林地鐵防空洞事故：誤判警報聲引發突進，樓梯口堆疊致173死",
+      "summary": "1943年3月3日晚間，倫敦東區貝斯納爾格林（Bethnal Green）地鐵站防空洞入口發生嚴重人群擠壓事故，造成173人死亡（其中62名兒童）、逾60人受傷，是二戰期間英國本土單一事件最高的平民傷亡之一。當時防空洞內已有約600人，地面上還有民眾正排隊等待進入唯一一處狹窄入口。附近一組新部署的防空火箭砲首次試射，發出民眾從未聽過的巨大聲響，群眾誤以為是敵方炸彈落下，於是突然加速往入口湧入；同一時間又有三輛公車在入口處卸客，使入口壓力在數十秒內急遽升高。一名抱著嬰兒與包袱的婦人在濕滑磨損的階梯下段絆倒，後方人潮在不到一分鐘內層層堆疊。事後調查指出當地政府未提供安全的入口設施：階梯磨損不平、沒有中央扶手、照明不足。這起事故同時展現兩種機制——外部刺激造成的「突然加速」（sprint_spike），以及瓶頸處人群完全卡死、無法前進也無法後退的「擠壓鎖死」（crowd_locked）。",
+      "event_location": "英國 倫敦 貝斯納爾格林地鐵站",
+      "publish_date": "1943-03-03",
+      "source_url": "https://www.nationalarchives.gov.uk/explore-the-collection/stories/the-bethnal-green-tube-shelter-disaster/",
+      "source_domain": "nationalarchives.gov.uk"
+    },
+    {
+      "incident_type": "crowd_crush",
+      "behavior_type": ["crowd_locked"],
+      "headline": "1993 香港蘭桂坊跨年人群擠壓事故：斜坡濕滑導致連鎖跌倒，21死",
+      "summary": "1993年1月1日凌晨約12時05分，香港中環蘭桂坊在跨年活動結束、酒吧人潮同時湧出時發生人群擠壓事故，造成21人死亡、63人受傷，罹難者多為20歲以下。當晚約有兩萬人聚集在蘭桂坊狹窄且帶坡度的街道與巷弄中。目擊者表示跨年倒數後數分鐘人群開始劇烈晃動，大量民眾互相推擠並噴灑啤酒與香檳，使原本就陡的路面變得極度濕滑。傷亡最嚴重處位於威靈頓街與榮華里交界——該處同時有斜坡與階梯，人群在壓力下絆倒後形成連鎖堆疊，死因多為擠壓性窒息。這起事故是「人群卡死」（crowd_locked）的典型：場地本身是開放街道而非封閉場館，但坡度、階梯與雙向湧出的人潮使局部密度在極短時間內超過可自主移動的門檻。事故後香港大幅修訂大型活動人潮管制規範。",
+      "event_location": "香港 中環 蘭桂坊（威靈頓街／榮華里交界）",
+      "publish_date": "1993-01-01",
+      "source_url": "https://www.hkjcdpri.org.hk/download/casestudies/FXBDPRIStampede.pdf",
+      "source_domain": "hkjcdpri.org.hk"
+    },
+    {
+      "incident_type": "crowd_crush",
+      "behavior_type": ["crowd_locked"],
+      "headline": "1982 莫斯科盧日尼基體育場事故：單一出口加陡梯，跌倒引發骨牌式堆疊",
+      "summary": "1982年10月20日，莫斯科列寧中央體育場（今盧日尼基體育場）在斯巴達克莫斯科對陣荷蘭哈勒姆的歐洲足聯盃賽事後發生嚴重人群擠壓事故。依官方調查，66名球迷死亡，多為青少年，是俄羅斯史上最嚴重的運動場館事故。致災條件在賽前就已形成：該場比賽售票不到場館容量的五分之一，場館方將球迷全部集中在東看台，其餘區域幾乎清空；為便於警方管制人群，散場時只開放單一出口。事故起於1號樓梯下段有一名球迷跌倒（部分紀錄指是一名女性球迷掉了鞋、停下撿拾），數人停下協助，但樓梯兩側有金屬欄杆限制、後方人流仍持續推進，停下的人隨即被壓倒，後續人潮絆過倒地者形成骨牌效應。狹窄通道與陡峭樓梯是結構性成因。需注意：坊間流傳「比賽尾聲進球使已離場球迷折返、與散場人流對撞」的說法，在後續調查中並未獲得證實，不宜作為此案的機制描述。",
+      "event_location": "俄羅斯 莫斯科 盧日尼基體育場（原列寧中央體育場）",
+      "publish_date": "1982-10-20",
+      "source_url": "https://en.wikipedia.org/wiki/Luzhniki_disaster",
+      "source_domain": "en.wikipedia.org"
+    },
+    {
+      "incident_type": "panic",
+      "behavior_type": ["panic_scatter"],
+      "headline": "1903 芝加哥易洛魁劇院大火：出口未標示且遭閂死，15分鐘內602人罹難",
+      "summary": "1903年12月30日下午，美國芝加哥易洛魁劇院（Iroquois Theatre）在日場演出進行中，舞台後方一盞弧光燈點燃布幕引發大火。當時觀眾席擠滿觀眾，以婦女與兒童為主。火勢在不到15分鐘內造成602人死亡，是美國史上單一建築物火災死亡人數最高的事故。該劇院對外宣稱安全設施完備，全場共設有30處逃生門，數量超過當時世界任何劇院；但事故中觀眾根本找不到出口——所有逃生門既無標示也無照明，且多數被巨大的插銷反鎖，原因是經營方不希望有人從外面溜進來看免費演出。調查認定絕大多數死亡肇因於逃生出口受阻與完全欠缺火災應變計畫，而非火勢本身。這起事故直接催生了現代逃生門的「推桿式門閂」（panic bar）設計，以及出口標示、照明與容留人數的法規要求。對本系統而言，這是「恐慌四散」（panic_scatter）最具代表性的劇院場景案例：外部刺激出現後人群瞬間朝多個方向逃散，而真正的致死因素是出口可用性，不是人群本身的移動速度。",
+      "event_location": "美國 伊利諾州 芝加哥 易洛魁劇院",
+      "publish_date": "1903-12-30",
+      "source_url": "https://en.wikipedia.org/wiki/Iroquois_Theatre_fire",
+      "source_domain": "en.wikipedia.org"
+    },
+    {
+      "incident_type": "panic",
+      "behavior_type": ["panic_scatter", "sprint_spike"],
+      "headline": "2017 曼徹斯特體育館爆炸案：散場人潮遭自殺炸彈攻擊後瞬間四散",
+      "summary": "2017年5月22日晚間10時30分過後，英國曼徹斯特體育館（Manchester Arena）在亞莉安娜·格蘭德演唱會即將結束、觀眾陸續散場之際，一名自殺炸彈客在場館外連通大廳的「City Room」區域引爆自製爆裂物，造成22人死亡、逾100人受到物理性傷害。當晚約有14,000名觀眾，以青少年與家庭為主，爆炸點正好位於散場人潮、在外等候的家長與周邊攤販交會的位置。目擊證詞描述爆炸後數秒內即出現大規模恐慌逃散：靠近爆點的觀眾（多為兒童與青少年）朝各個出口狂奔，有人踩上座椅翻越，樓梯處出現互相推擠、有人被推倒。官方事後檢討（Kerslake Report）指出，場館與應變單位對「散場時段遭受攻擊」這種情境的準備不足。這起事件是「恐慌四散」（panic_scatter）伴隨「突然加速」（sprint_spike）的典型：群體在極短時間內由有序散場轉為多方向高速逃離，且在樓梯等瓶頸處立即形成二次擠壓風險。",
+      "event_location": "英國 曼徹斯特體育館 City Room 大廳",
+      "publish_date": "2017-05-22",
+      "source_url": "https://en.wikipedia.org/wiki/Manchester_Arena_bombing",
+      "source_domain": "en.wikipedia.org"
+    }
+  ]
+}
