@@ -17,6 +17,7 @@ from typing import List, Optional
 import requests
 
 from config.settings import Settings, get_settings
+from utils.http_retry import post_json_with_retry
 from utils.logger import get_logger
 from vlm.base import BaseVLM
 
@@ -85,8 +86,16 @@ class OllamaVLM(BaseVLM):
             "stream": False,
         }
         logger.info("OllamaVLM 呼叫 model=%s", self._model)
-        response = requests.post(f"{self._base_url}/api/chat", json=payload, timeout=self._timeout)
-        response.raise_for_status()
+        # 用帶重試的 POST：這台機器只有 4GB VRAM，VLM 與 LLM 交替使用時
+        # Ollama 需要反覆換入換出模型，某次重載會撞上 timeout（見
+        # utils/http_retry.py 的實測記錄）。沒有重試的話，一次暫時性卡頓
+        # 就等於整筆事件跑不出結果。
+        response = post_json_with_retry(
+            f"{self._base_url}/api/chat",
+            payload,
+            timeout=self._timeout,
+            context=f"OllamaVLM model={self._model}",
+        )
         return response.json()["message"]["content"]
 
     def generate_embedding(self, image: bytes) -> List[float]:

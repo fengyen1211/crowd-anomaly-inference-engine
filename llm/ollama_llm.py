@@ -16,10 +16,9 @@ TODO：
 
 from typing import Dict, List, Optional
 
-import requests
-
 from config.settings import Settings, get_settings
 from llm.base import BaseLLMClient
+from utils.http_retry import post_json_with_retry
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -53,6 +52,12 @@ class OllamaLLMClient(BaseLLMClient):
             payload["options"] = kwargs
 
         logger.info("OllamaLLMClient 呼叫 model=%s", self._model)
-        response = requests.post(f"{self._base_url}/api/chat", json=payload, timeout=self._timeout)
-        response.raise_for_status()
+        # 跟 vlm/ollama_vlm.py 同樣理由用帶重試的 POST：4GB VRAM 上
+        # VLM/LLM 交替時的模型換入換出，會讓單次請求偶發撞上 timeout。
+        response = post_json_with_retry(
+            f"{self._base_url}/api/chat",
+            payload,
+            timeout=self._timeout,
+            context=f"OllamaLLMClient model={self._model}",
+        )
         return response.json()["message"]["content"]
