@@ -11,12 +11,18 @@ lru_cache 過的單例，只會在第一次呼叫時真的載入模型，後面 
 
 使用方式（在 project/ 目錄下執行）：
     python scripts/run_tinyformer_batch.py
+    python scripts/run_tinyformer_batch.py --output tinyformer7_pipeline_report_v2.json
 
 輸出：
     - 主控台：每一筆事件的處理進度與耗時
-    - tinyformer7_pipeline_report.json：完整結果彙整
+    - tinyformer7_pipeline_report.json（預設）：完整結果彙整
+
+注意：--output 預設會覆寫既有報告。這支腳本跑一次要 5-7 分鐘、且報告檔
+在 .gitignore 裡（不進版控），覆寫掉就沒有了，因此要做前後對照實驗時
+請明確指定不同的 --output，不要靠預設值。
 """
 
+import argparse
 import json
 import sys
 import time
@@ -28,12 +34,24 @@ from pydantic import ValidationError  # noqa: E402
 
 from app.dependencies import get_orchestrator_service  # noqa: E402
 
-_INPUT_PATH = Path(__file__).resolve().parent.parent / "data" / "tinyformer7_events.json"
-_OUTPUT_PATH = Path(__file__).resolve().parent.parent / "tinyformer7_pipeline_report.json"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_INPUT_PATH = _PROJECT_ROOT / "data" / "tinyformer7_events.json"
+_OUTPUT_PATH = _PROJECT_ROOT / "tinyformer7_pipeline_report.json"
 
 
 def main() -> None:
-    raw = json.loads(_INPUT_PATH.read_text(encoding="utf-8"))
+    # 先前這支腳本把輸入/輸出路徑寫死、也沒有 argparse，導致傳入
+    # --input / --output 會被「靜默忽略」——不會報錯，但報告仍然寫到預設
+    # 路徑，覆蓋掉上一次實驗的結果。加上 argparse 讓這兩個參數真的生效。
+    parser = argparse.ArgumentParser(description="批次跑 TinyFormer 事件的推論端 pipeline")
+    parser.add_argument("--input", default=str(_INPUT_PATH), help="事件 JSON 路徑")
+    parser.add_argument("--output", default=str(_OUTPUT_PATH), help="報告輸出路徑（會覆寫既有檔案）")
+    args = parser.parse_args()
+
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+
+    raw = json.loads(input_path.read_text(encoding="utf-8"))
     records = raw["records"]
 
     orchestrator = get_orchestrator_service()
@@ -69,15 +87,15 @@ def main() -> None:
     total_elapsed = time.time() - overall_start
 
     report = {
-        "source": "0901/tinyformer_events_7.json -> data/tinyformer7_events.json",
+        "source": f"0901/tinyformer_events_7.json -> {input_path.name}",
         "total_records": len(records),
         "total_elapsed_sec": round(total_elapsed, 1),
         "results": results,
     }
-    _OUTPUT_PATH.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"\n=== 全部完成，共耗時 {total_elapsed:.1f}s ===")
-    print(f"報告已寫入：{_OUTPUT_PATH}")
+    print(f"報告已寫入：{output_path}")
 
 
 if __name__ == "__main__":
