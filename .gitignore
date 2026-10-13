@@ -45,3 +45,6 @@ data/knowledge_base_sources_news/
 # ============================================================
 .vscode/
 .idea/
+
+# scripts/nano4/run_model_sweep.sbatch 的對照實驗輸出，結論一樣摘進進度報告的 .md
+reports/

@@ -1,0 +1,4 @@
+# shell / Slurm 腳本要在 Linux（Nano4）上執行，強制 LF 換行，
+# 否則 autocrlf 簽出成 CRLF 後 bash 會報 $'\r': command not found
+*.sh text eol=lf
+*.sbatch text eol=lf

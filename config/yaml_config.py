@@ -18,6 +18,7 @@ get_visual_embedding_client() / get_llm_client() / get_vlm_client()
 都會讀取這裡的設定動態建立實作。
 """
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -56,4 +57,13 @@ def load_config(config_path: Optional[Path] = None) -> AppConfig:
     """
     path = config_path or _DEFAULT_CONFIG_PATH
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return AppConfig(**raw)
+    config = AppConfig(**raw)
+
+    # 對照實驗（scripts/nano4/run_model_sweep.sbatch）要在同一份 config.yaml
+    # 下輪流換不同大小的 VLM/LLM，用環境變數覆寫 model 名稱，避免每一組
+    # 實驗都要改一次被版控追蹤的 config.yaml。只覆寫 model、不動 provider。
+    for section, env_name in (("vlm", "VLM_MODEL"), ("llm", "LLM_MODEL")):
+        override = os.environ.get(env_name)
+        if override:
+            getattr(config, section).model = override
+    return config
