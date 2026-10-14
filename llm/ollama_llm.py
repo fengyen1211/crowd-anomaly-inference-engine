@@ -14,7 +14,7 @@ TODO：
 - [ ] 支援 streaming 回應（目前固定 stream=False，一次拿到完整回應）
 """
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from config.settings import Settings, get_settings
 from llm.base import BaseLLMClient
@@ -46,17 +46,24 @@ class OllamaLLMClient(BaseLLMClient):
         self._base_url = (base_url or settings.ollama_base_url).rstrip("/")
         self._timeout = timeout
 
-    def chat_completion(self, messages: List[Dict[str, str]], json_mode: bool = False, **kwargs) -> str:
+    def chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        json_schema: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> str:
         """
         Args:
-            json_mode: True 時要求 Ollama 以 JSON 文法限制輸出（format="json"），
-                       保證回應是語法合法的 JSON。只給要解析成 JSON 的呼叫用；
-                       摘要這類純文字輸出不要開。
+            json_schema: 給定時當作 Ollama 的 format 送出，由 Ollama 以這份 JSON
+                       schema 的文法限制輸出，保證回應是合法 JSON、且必填欄位都在。
+                       只給要解析成 JSON 的呼叫用；摘要這類純文字輸出不要給。
+                       刻意不用 format="json"：它只保證語法合法，Nano4 上 gemma3:4b
+                       有一半回應直接輸出 2 個 token 的空物件，欄位全部缺失。
             **kwargs: 其餘參數原樣放進 Ollama 的 options（例如 temperature）。
         """
         payload = {"model": self._model, "messages": messages, "stream": False}
-        if json_mode:
-            payload["format"] = "json"
+        if json_schema is not None:
+            payload["format"] = json_schema
         if kwargs:
             payload["options"] = kwargs
 
