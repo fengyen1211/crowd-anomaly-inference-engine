@@ -33,6 +33,7 @@ class OllamaVLM(BaseVLM):
         base_url: Optional[str] = None,
         settings: Optional[Settings] = None,
         timeout: float = 300.0,
+        max_tokens: int = 1024,
     ) -> None:
         """
         Args:
@@ -40,11 +41,15 @@ class OllamaVLM(BaseVLM):
             base_url: Ollama 服務位址，預設讀取 Settings.ollama_base_url。
             timeout: 單次請求逾時秒數（本地 VLM 在消費級硬體上生成
                      需要一段時間，預設放寬到 300 秒）。
+            max_tokens: 單次描述的生成長度上限（Ollama 的 num_predict）。
+                     正常描述約 220 token，上限只是用來擋失控生成，見
+                     describe_image() 裡的說明。
         """
         settings = settings or get_settings()
         self._model = model
         self._base_url = (base_url or settings.ollama_base_url).rstrip("/")
         self._timeout = timeout
+        self._max_tokens = max_tokens
         self._is_loaded = False
 
     def load_model(self) -> None:
@@ -84,6 +89,11 @@ class OllamaVLM(BaseVLM):
                 }
             ],
             "stream": False,
+            # 生成長度上限：Nano4 sweep 中 qwen2.5vl:7b 處理 counter_flow（主畫面＋
+            # 前後脈絡幀共 3 張）時，6 次都在第一次請求陷入重複生成，5 分鐘內
+            # 產生 9,600～11,300 token 才被 300 秒逾時切斷（正常描述約 220 token）。
+            # 沒有上限的話只能靠逾時止血，每次白等 5 分鐘。
+            "options": {"num_predict": self._max_tokens},
         }
         logger.info("OllamaVLM 呼叫 model=%s", self._model)
         # 用帶重試的 POST：這台機器只有 4GB VRAM，VLM 與 LLM 交替使用時

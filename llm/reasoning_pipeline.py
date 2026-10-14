@@ -74,8 +74,15 @@ class ReasoningPipeline:
     ):
         """呼叫 LLM 產生 final_verdict / final_confidence / possible_causes / recommended_actions。"""
         messages = ReasoningPromptBuilder.build(event_record, retrieved_context, vlm_observation)
-        raw_response = self._llm_client.chat_completion(messages)
-        data = parse_json_response(raw_response)
+        # json_mode 讓支援的 client（Ollama）用 JSON 文法限制輸出：Nano4 sweep 中
+        # gemma3:4b 約 10% 回應因字串內非法跳脫（Invalid \escape）等語法錯誤而無法
+        # 解析，整筆事件報廢。解析失敗時再重新請求一次，作為不支援 json_mode 的
+        # client 的保險。
+        try:
+            data = parse_json_response(self._llm_client.chat_completion(messages, json_mode=True))
+        except ValueError:
+            logger.warning("record_id=%s 的推論回應不是合法 JSON，重新請求一次", event_record.record_id)
+            data = parse_json_response(self._llm_client.chat_completion(messages, json_mode=True))
 
         return (
             FinalVerdict(data["final_verdict"]),

@@ -46,8 +46,17 @@ class OllamaLLMClient(BaseLLMClient):
         self._base_url = (base_url or settings.ollama_base_url).rstrip("/")
         self._timeout = timeout
 
-    def chat_completion(self, messages: List[Dict[str, str]], **kwargs) -> str:
+    def chat_completion(self, messages: List[Dict[str, str]], json_mode: bool = False, **kwargs) -> str:
+        """
+        Args:
+            json_mode: True 時要求 Ollama 以 JSON 文法限制輸出（format="json"），
+                       保證回應是語法合法的 JSON。只給要解析成 JSON 的呼叫用；
+                       摘要這類純文字輸出不要開。
+            **kwargs: 其餘參數原樣放進 Ollama 的 options（例如 temperature）。
+        """
         payload = {"model": self._model, "messages": messages, "stream": False}
+        if json_mode:
+            payload["format"] = "json"
         if kwargs:
             payload["options"] = kwargs
 
