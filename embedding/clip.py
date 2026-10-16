@@ -56,7 +56,8 @@ class CLIPEmbeddingProvider(BaseEmbeddingProvider):
         inputs = self._processor(text=texts, padding=True, truncation=True, return_tensors="pt")
         inputs = {key: value.to(self._device) for key, value in inputs.items()}
         with self._torch.no_grad():
-            features = self._model.get_text_features(**inputs)
+            pooled = self._model.text_model(**inputs).pooler_output
+            features = self._model.text_projection(pooled)
         return self._normalize(features).tolist()
 
     def embed_image(self, images: List[bytes]) -> List[List[float]]:
@@ -69,7 +70,12 @@ class CLIPEmbeddingProvider(BaseEmbeddingProvider):
         inputs = self._processor(images=pil_images, return_tensors="pt")
         inputs = {key: value.to(self._device) for key, value in inputs.items()}
         with self._torch.no_grad():
-            features = self._model.get_image_features(**inputs)
+            # 不用 get_image_features()：transformers 4.x 回傳 tensor，新版改回傳
+            # BaseModelOutputWithPooling，在 Nano4 上裝到新版時整批事件都在
+            # _normalize() 的 .norm() 失敗。直接做它內部的兩步
+            # （encoder 的 pooled 輸出 -> projection），新舊版本結果一致。
+            pooled = self._model.vision_model(**inputs).pooler_output
+            features = self._model.visual_projection(pooled)
         return self._normalize(features).tolist()
 
     def _normalize(self, features):

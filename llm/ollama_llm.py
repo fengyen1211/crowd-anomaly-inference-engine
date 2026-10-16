@@ -14,12 +14,11 @@ TODO：
 - [ ] 支援 streaming 回應（目前固定 stream=False，一次拿到完整回應）
 """
 
-from typing import Dict, List, Optional
-
-import requests
+from typing import Any, Dict, List, Optional
 
 from config.settings import Settings, get_settings
 from llm.base import BaseLLMClient
+from utils.http_retry import post_json_with_retry
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -47,12 +46,34 @@ class OllamaLLMClient(BaseLLMClient):
         self._base_url = (base_url or settings.ollama_base_url).rstrip("/")
         self._timeout = timeout
 
-    def chat_completion(self, messages: List[Dict[str, str]], **kwargs) -> str:
+    def chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        json_schema: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> str:
+        """
+        Args:
+            json_schema: 給定時當作 Ollama 的 format 送出，由 Ollama 以這份 JSON
+                       schema 的文法限制輸出，保證回應是合法 JSON、且必填欄位都在。
+                       只給要解析成 JSON 的呼叫用；摘要這類純文字輸出不要給。
+                       刻意不用 format="json"：它只保證語法合法，Nano4 上 gemma3:4b
+                       有一半回應直接輸出 2 個 token 的空物件，欄位全部缺失。
+            **kwargs: 其餘參數原樣放進 Ollama 的 options（例如 temperature）。
+        """
         payload = {"model": self._model, "messages": messages, "stream": False}
+        if json_schema is not None:
+            payload["format"] = json_schema
         if kwargs:
             payload["options"] = kwargs
 
         logger.info("OllamaLLMClient 呼叫 model=%s", self._model)
-        response = requests.post(f"{self._base_url}/api/chat", json=payload, timeout=self._timeout)
-        response.raise_for_status()
+        # 跟 vlm/ollama_vlm.py 同樣理由用帶重試的 POST：4GB VRAM 上
+        # VLM/LLM 交替時的模型換入換出，會讓單次請求偶發撞上 timeout。
+        response = post_json_with_retry(
+            f"{self._base_url}/api/chat",
+            payload,
+            timeout=self._timeout,
+            context=f"OllamaLLMClient model={self._model}",
+        )
         return response.json()["message"]["content"]

@@ -18,7 +18,11 @@ dist/
 chroma_data/
 inference_engine.db
 pipeline_output*.json
-tinyformer7*pipeline_report.json
+# 結尾也用萬用字元：做前後對照實驗時報告會帶後綴（例如
+# tinyformer7_pipeline_report_cleaned_news.json），原本的
+# 「*pipeline_report.json」比對不到，會讓產生出來的報告意外進版控。
+# 報告內容該留存時，慣例是摘進進度報告的 .md（那份才進版控）。
+tinyformer7*pipeline_report*.json
 
 # 注意：frames/ 故意不整批忽略——裡面除了測試用占位圖，
 # 也包含 data/*.json 範例事件實際引用的真實畫面（例如
@@ -41,3 +45,6 @@ data/knowledge_base_sources_news/
 # ============================================================
 .vscode/
 .idea/
+
+# scripts/nano4/run_model_sweep.sbatch 的對照實驗輸出，結論一樣摘進進度報告的 .md
+reports/
