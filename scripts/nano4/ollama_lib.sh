@@ -29,7 +29,10 @@ start_ollama() {
     # 都可以在送 job 前自己 export 覆蓋，方便做對照。
     export OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-8192}
     export OLLAMA_NUM_THREAD=${OLLAMA_NUM_THREAD:-${SLURM_CPUS_PER_TASK:-8}}
-    echo "OLLAMA_CONTEXT_LENGTH=$OLLAMA_CONTEXT_LENGTH  OLLAMA_NUM_THREAD=$OLLAMA_NUM_THREAD"
+    # llm/reasoning_pipeline.py 會同時送出推論與摘要兩個請求，Ollama 預設一次
+    # 只處理 1 個，要設 2 才會真的平行
+    export OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-2}
+    echo "OLLAMA_CONTEXT_LENGTH=$OLLAMA_CONTEXT_LENGTH  OLLAMA_NUM_THREAD=$OLLAMA_NUM_THREAD  OLLAMA_NUM_PARALLEL=$OLLAMA_NUM_PARALLEL"
 
     # 同一個節點可能同時有別人的 Ollama 在跑，用 job id 算出不衝突的 port，
     # 再透過 OLLAMA_BASE_URL 環境變數傳給 config/settings.py。
