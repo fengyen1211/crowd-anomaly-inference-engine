@@ -64,13 +64,22 @@ def main() -> None:
         record_id = record.get("record_id")
         print(f"\n[{i + 1}/{len(records)}] 處理事件：{record_id}（predicted_event_type={record.get('predicted_event_type')}）")
         start = time.time()
+        # 初步警報產生的時間點：VLM 看完畫面就有，不必等 RAG + LLM
+        preliminary_at = []
         try:
-            output = orchestrator.process_event(record)
+            output = orchestrator.process_event(
+                record, on_preliminary_alert=lambda alert: preliminary_at.append(time.time())
+            )
             elapsed = time.time() - start
-            print(f"  -> 完成，耗時 {elapsed:.1f}s，alert_level={output.alert_level.value}")
+            preliminary_sec = preliminary_at[0] - start
+            print(
+                f"  -> 完成，初步警報 {preliminary_sec:.1f}s（{output.preliminary_alert_level.value}），"
+                f"完整 {elapsed:.1f}s（{output.alert_level.value}）"
+            )
             results.append({
                 "record_id": record_id,
                 "status": "ok",
+                "preliminary_sec": round(preliminary_sec, 2),
                 "elapsed_sec": round(elapsed, 1),
                 "output": json.loads(output.model_dump_json()),
             })

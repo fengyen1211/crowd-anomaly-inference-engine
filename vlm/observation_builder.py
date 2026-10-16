@@ -9,18 +9,14 @@ predicted_event_type 做比對，屬於業務邏輯，所以獨立成這個模�
 不要塞進 BaseVLM 的 Provider 實作裡（Provider 只管模型能力，
 不管業務判斷，才能保持 Provider 之間可以互相替換）。
 
-目前實作：★ 暫時的簡化版本 ★
-還沒有真正的交叉驗證邏輯（那其實是 LLM 的工作，見
-prompts/reasoning_prompt.py 的 final_verdict）。這裡的
-verification_verdict 先固定回傳 UNCERTAIN、visual_confidence 固定
-回傳 0.5，誠實反映「目前 VLM 這一步只有描述能力，還沒有驗證能力」，
-而不是編造一個看起來很篤定、實際上沒有依據的假結果。
+這裡只做中立描述：verification_verdict 固定回傳 UNCERTAIN、
+visual_confidence 固定回傳 0.5，真正的驗證結論由下一步
+llm/visual_verifier.py 依描述文字填入。
 
-TODO：
-- [ ] 之後可以讓 VLM 的 prompt 本身就要求輸出結構化的驗證結果
-      （例如直接問模型「這個描述支持 xxx 事件類型嗎？」），
-      到時候這裡就能填入真正算出來的 verdict/confidence，
-      而不是寫死的預設值。
+曾經試過讓 VLM 看圖時直接判斷（prompt 要求輸出 support／contradict），
+但 qwen2.5vl:3b 幾乎一律回答 support、信心 0.90，描述也被系統給的行為
+說明帶偏，所以 prompt 刻意維持「只描述、不判斷」（見
+prompts/verification_prompt.py 的說明）。
 """
 
 from typing import List, Optional

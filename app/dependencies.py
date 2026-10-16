@@ -27,11 +27,13 @@ from embedding.factory import EmbeddingFactory
 from llm.base import BaseLLMClient
 from llm.factory import LLMFactory
 from llm.reasoning_pipeline import ReasoningPipeline
+from llm.visual_verifier import VisualVerifier
 from rag.knowledge_indexer import KnowledgeBaseIndexer
 from rag.text_retriever import KnowledgeTextRetriever
 from rag.vector_store import ChromaVectorStore
 from rag.visual_indexer import VisualEventIndexer
 from rag.visual_retriever import VisualSimilarityRetriever
+from services.analysis_store import InMemoryAnalysisStore
 from services.alert_service import AlertComposerService
 from services.frame_service import FrameLoaderService
 from services.ingestion_service import IngestionService
@@ -209,6 +211,15 @@ def get_reasoning_pipeline() -> ReasoningPipeline:
     return ReasoningPipeline(get_llm_client())
 
 
+@lru_cache
+def get_analysis_store() -> InMemoryAnalysisStore:
+    """
+    背景分析結果的存放區。用 lru_cache 讓整個應用程式共用同一份——
+    /ingest 的背景任務寫入、/analysis 讀取，必須是同一個物件。
+    """
+    return InMemoryAnalysisStore()
+
+
 def get_orchestrator_service() -> OrchestratorService:
     """
     組裝整個推論端 pipeline 的 Orchestrator。
@@ -230,6 +241,7 @@ def get_orchestrator_service() -> OrchestratorService:
         ingestion_service=get_ingestion_service(),
         frame_service=get_frame_service(),
         vlm_client=get_vlm_client(),
+        visual_verifier=VisualVerifier(get_llm_client()),
         visual_embedding_provider=get_visual_embedding_client(),
         visual_retriever=get_visual_retriever(),
         text_retriever=get_text_retriever(),

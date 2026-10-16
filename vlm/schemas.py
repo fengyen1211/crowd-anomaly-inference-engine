@@ -54,6 +54,9 @@ class VLMObservation(BaseModel):
     # VLM 自評的信心程度（0.0 ~ 1.0），用來取代影像端寫死的假 confidence
     visual_confidence: float = Field(..., ge=0.0, le=1.0)
 
+    # verification_verdict 的一句話依據（由 llm/visual_verifier.py 填入），
+    # 未經驗證時為空字串
+    verification_reason: str = ""
     # 規則系統看不到、但畫面中存在的額外線索
     # 例如：["煙霧", "出口方向", "障礙物"]
     extra_context: List[str] = Field(default_factory=list)

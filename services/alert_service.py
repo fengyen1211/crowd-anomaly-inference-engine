@@ -19,6 +19,7 @@ prompts/alert_prompt.py + LLM（那是「表達」而不是「決策」，
 from llm.schemas import AnalysisResult, FinalVerdict
 from utils.logger import get_logger
 from utils.schemas import Alert, AlertSeverity, PredictedEventType, RawEventRecord
+from vlm.schemas import VerificationVerdict, VLMObservation
 
 logger = get_logger(__name__)
 
@@ -67,29 +68,72 @@ class AlertComposerService:
         )
         return alert
 
+    def compose_preliminary(self, event_record: RawEventRecord, vlm_observation: VLMObservation) -> Alert:
+        """
+        只依規則系統標籤與 VLM 驗證結論組成「初步警報」，不等 RAG + LLM。
+
+        等級規則跟最終警報相同（見 _severity()），只是把 LLM 綜合 RAG 後的
+        final_verdict 換成 verification_verdict（llm/visual_verifier.py 依
+        VLM 描述判斷，不做 RAG）：support 對應
+        confirmed、contradict 對應 overturned。最終警報出來後以最終警報為準，
+        等級可能升高也可能降低。
+        """
+        severity = _severity(
+            event_record.predicted_event_type,
+            rejected=vlm_observation.verification_verdict == VerificationVerdict.CONTRADICT,
+            confirmed=vlm_observation.verification_verdict == VerificationVerdict.SUPPORT,
+            confidence=vlm_observation.visual_confidence,
+        )
+
+        alert = Alert(
+            record_id=event_record.record_id,
+            severity=severity,
+            title=f"[{severity.value.upper()}・初步] {event_record.predicted_event_type} 事件",
+            short_message=vlm_observation.visual_description,
+            full_report="\n".join(
+                [
+                    "初步警報：僅依規則系統標籤與視覺模型觀察，完整分析（原因、應變建議）產生中。",
+                    f"畫面觀察：{vlm_observation.visual_description}",
+                    f"視覺驗證：{vlm_observation.verification_verdict.value}"
+                    f"（信心分數：{vlm_observation.visual_confidence:.2f}）"
+                    + (f"，依據：{vlm_observation.verification_reason}" if vlm_observation.verification_reason else ""),
+                ]
+            ),
+            frame_file=event_record.frame_file,
+        )
+        logger.info(
+            "AlertComposerService 組成初步警報：record_id=%s severity=%s",
+            event_record.record_id, severity.value,
+        )
+        return alert
+
     def _decide_severity(self, event_record: RawEventRecord, analysis_result: AnalysisResult) -> AlertSeverity:
-        """
-        純規則邏輯，依事件類型、最終判定與信心分數決定嚴重程度。
+        return _severity(
+            event_record.predicted_event_type,
+            rejected=analysis_result.final_verdict == FinalVerdict.OVERTURNED,
+            confirmed=analysis_result.final_verdict == FinalVerdict.CONFIRMED,
+            confidence=analysis_result.final_confidence,
+        )
 
-        規則（由上而下依序判斷，符合就回傳，不繼續往下比對）：
-        1. 規則系統的判斷被 LLM 推翻（overturned）-> 原本的異常判斷不成立 -> info
-        2. 恐慌性移動（見 _PANIC_EVENT_TYPES）且信心夠高 -> 影響人身安全風險最高 -> critical
-        3. 判斷維持成立（confirmed）且信心夠高 -> warning
-        4. 其餘情況（uncertain、信心不足...）-> info，避免誤報造成不必要的恐慌
-        """
-        if analysis_result.final_verdict == FinalVerdict.OVERTURNED:
-            return AlertSeverity.INFO
 
-        if (
-            event_record.predicted_event_type in _PANIC_EVENT_TYPES
-            and analysis_result.final_confidence >= 0.7
-        ):
-            return AlertSeverity.CRITICAL
+def _severity(event_type: str, rejected: bool, confirmed: bool, confidence: float) -> AlertSeverity:
+    """
+    純規則邏輯，依事件類型、判定與信心分數決定嚴重程度。初步警報（VLM 判定）
+    與最終警報（LLM 判定）共用同一套規則，兩者的等級才能直接比較。
 
-        if (
-            analysis_result.final_verdict == FinalVerdict.CONFIRMED
-            and analysis_result.final_confidence >= 0.6
-        ):
-            return AlertSeverity.WARNING
-
+    規則（由上而下依序判斷，符合就回傳，不繼續往下比對）：
+    1. 規則系統的判斷被推翻（rejected）-> 原本的異常判斷不成立 -> info
+    2. 恐慌性移動（見 _PANIC_EVENT_TYPES）且信心夠高 -> 影響人身安全風險最高 -> critical
+    3. 判斷維持成立（confirmed）且信心夠高 -> warning
+    4. 其餘情況（uncertain、信心不足...）-> info，避免誤報造成不必要的恐慌
+    """
+    if rejected:
         return AlertSeverity.INFO
+
+    if event_type in _PANIC_EVENT_TYPES and confidence >= 0.7:
+        return AlertSeverity.CRITICAL
+
+    if confirmed and confidence >= 0.6:
+        return AlertSeverity.WARNING
+
+    return AlertSeverity.INFO

@@ -10,7 +10,7 @@ rag.schemas.RetrievedContext、llm.schemas.AnalysisResult、
 utils.schemas.Alert 裡，這裡只保留最外部呼叫端在意的欄位。
 """
 
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -25,3 +25,6 @@ class PipelineOutput(BaseModel):
     possible_causes: List[str]
     recommendation: List[str]
     alert_level: AlertSeverity
+    # 只依規則系統標籤與 VLM 驗證結論產生的初步警報等級（見
+    # AlertComposerService.compose_preliminary()），可能跟 alert_level 不同
+    preliminary_alert_level: Optional[AlertSeverity] = None
