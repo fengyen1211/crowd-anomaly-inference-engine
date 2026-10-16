@@ -50,6 +50,7 @@ class OllamaVLM(BaseVLM):
         self._base_url = (base_url or settings.ollama_base_url).rstrip("/")
         self._timeout = timeout
         self._max_tokens = max_tokens
+        self._num_thread = settings.ollama_num_thread
         self._is_loaded = False
 
     def load_model(self) -> None:
@@ -95,6 +96,8 @@ class OllamaVLM(BaseVLM):
             # 沒有上限的話只能靠逾時止血，每次白等 5 分鐘。
             "options": {"num_predict": self._max_tokens},
         }
+        if self._num_thread > 0:
+            payload["options"]["num_thread"] = self._num_thread
         logger.info("OllamaVLM 呼叫 model=%s", self._model)
         # 用帶重試的 POST：這台機器只有 4GB VRAM，VLM 與 LLM 交替使用時
         # Ollama 需要反覆換入換出模型，某次重載會撞上 timeout（見

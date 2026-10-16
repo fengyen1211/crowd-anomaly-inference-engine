@@ -45,6 +45,7 @@ class OllamaLLMClient(BaseLLMClient):
         self._model = model
         self._base_url = (base_url or settings.ollama_base_url).rstrip("/")
         self._timeout = timeout
+        self._num_thread = settings.ollama_num_thread
 
     def chat_completion(
         self,
@@ -64,8 +65,11 @@ class OllamaLLMClient(BaseLLMClient):
         payload = {"model": self._model, "messages": messages, "stream": False}
         if json_schema is not None:
             payload["format"] = json_schema
-        if kwargs:
-            payload["options"] = kwargs
+        options = dict(kwargs)
+        if self._num_thread > 0:
+            options.setdefault("num_thread", self._num_thread)
+        if options:
+            payload["options"] = options
 
         logger.info("OllamaLLMClient 呼叫 model=%s", self._model)
         # 跟 vlm/ollama_vlm.py 同樣理由用帶重試的 POST：4GB VRAM 上
