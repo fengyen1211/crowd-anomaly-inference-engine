@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     # Ollama 服務（例如 Qwen3 / Gemma3 / Qwen2.5-VL / MiniCPM-V），
     # 模型量化、載入、記憶體管理都交給 Ollama 處理。
     ollama_base_url: str = "http://localhost:11434"
+    # 每次請求帶給 Ollama 的 num_thread，0 表示不指定、交給 Ollama 自己決定。
+    # Nano4 的計算節點有 112 核，Ollama 會照實體核數開 112 個執行緒，但 Slurm
+    # 只配給 job 幾顆 CPU，執行緒互搶會拖慢生成；scripts/nano4/ollama_lib.sh
+    # 會把它設成 job 實際配到的 CPU 數。
+    ollama_num_thread: int = 0
 
     # ---------- 向量資料庫（ChromaDB）設定 ----------
     chroma_persist_dir: str = "./chroma_data"

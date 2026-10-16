@@ -48,3 +48,6 @@ data/knowledge_base_sources_news/
 
 # scripts/nano4/run_model_sweep.sbatch 的對照實驗輸出，結論一樣摘進進度報告的 .md
 reports/
+
+# Nano4 sbatch 與 Ollama 服務的 log（含帳號、/work 路徑、節點名稱），跟 reports/ 一樣不進版控
+logs/

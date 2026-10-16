@@ -12,11 +12,13 @@ Reasoning Module 的核心串接邏輯。
   recommended_actions（見 prompts/reasoning_prompt.py，這四件事都需要
   同一份 RAG 檢索結果做 grounding，放在同一個 prompt 裡比較不會互相矛盾）
 - _summarize()：產生 summary（見 prompts/summary_prompt.py，
-  不需要 RAG 檢索結果，是獨立的任務）
+  不需要 RAG 檢索結果，是獨立的任務，所以跟 _reason() 同時送出）
 
 這個類別只依賴 BaseLLMClient 這個抽象介面（依賴注入），
 不知道也不在乎背後是 MockLLMClient 還是 OpenAILLMClient。
 """
+
+from concurrent.futures import ThreadPoolExecutor
 
 from llm.base import BaseLLMClient
 from llm.schemas import AnalysisResult, FinalVerdict
@@ -66,8 +68,14 @@ class ReasoningPipeline:
         """
         logger.info("ReasoningPipeline.run() 開始處理 record_id=%s", event_record.record_id)
 
-        verdict, confidence, causes, actions = self._reason(event_record, vlm_observation, retrieved_context)
-        summary = self._summarize(event_record, vlm_observation)
+        # 摘要只需要事件資料與 VLM 觀察，不依賴推論結果，兩次 LLM 呼叫同時送出，
+        # 每筆事件省下摘要那一次的等待（H200 上約 1～3 秒）。Ollama 要設
+        # OLLAMA_NUM_PARALLEL >= 2 才會真的平行處理，否則只是在服務端排隊，
+        # 結果相同、只是不會變快。任一邊拋出的例外都會照原樣往上傳。
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            summary_future = pool.submit(self._summarize, event_record, vlm_observation)
+            verdict, confidence, causes, actions = self._reason(event_record, vlm_observation, retrieved_context)
+            summary = summary_future.result()
 
         return AnalysisResult(
             record_id=event_record.record_id,

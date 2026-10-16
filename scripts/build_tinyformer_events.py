@@ -34,16 +34,18 @@ frame 378-1086，共 23.6 秒）裡，總共有 2,997 筆紀錄，涵蓋 315 個
   7 幀，任何有意義的間隔門檻都切不開（實測 gap > 10 幀就只剩 1 段）。
 - 峰值偵測必須同時設「最小間距」與「強度下限」，見 _PEAK_CONFIG 的註解。
   整個類型的強度都達不到下限時，視為只有底噪，該類型不產生任何事件。
-- 沒有強度數值的類型（panic_scatter／counter_flow）無從比較峰值，
-  維持原本的單一事件行為。
+- 沒有強度數值的類型（panic_scatter／counter_flow）無從比較峰值，改用
+  「時間間隔切段」（見 _GAP_SPLIT_FRAMES）：這兩類訊號很稀疏，空檔明顯，
+  間隔切段對它們有效。代表幀取同一幀涉及人數最多者（見 _pick_densest_frame）。
 
 每一筆事件現在代表「一段時間內的一波異常」，而不是「整個類型的總和」：
 - 代表幀（frame_idx／frame_file／spatial_bbox）：該波的峰值實例
+  （無強度類型則是該段人數最多的一幀，bbox 取該幀所有訊號的聯集）
 - member_ids／member_count：屬於該波的訊號所涉及的不重複人物 ID。
-  訊號用「最近峰值」歸屬（見 _partition_by_nearest_peak），所以每一筆
-  原始訊號都會落在且只落在一筆事件底下，不會遺漏也不會重複計算。
+  訊號用「最近峰值」歸屬（見 _partition_by_nearest_peak），間隔切段則
+  本來就互斥，所以每一筆原始訊號都會落在且只落在一筆事件底下。
 - record_id：同類型切出多波時加上 _p1.._pN 後綴；只有一波時維持原本的
-  裸名稱，讓 panic_scatter／counter_flow 的 record_id 不受這次修改影響
+  裸名稱（例如 counter_flow）
 - caption：誠實列出「這是第 k 波／共 N 波」與該波自己的統計數字，
   並註明代表幀只是該波的一個瞬間
 
@@ -83,9 +85,11 @@ panic_scatter／counter_flow 的事件前後脈絡畫面
 變化」的行為，但 TinyFormer+SAM2 只給 z-score／密度這種瞬時強度數值，
 沒有方向角度，VLM 又只看 DURING 單一靜態幀，看不出「四散」「反向」這種
 需要前後對照才能判斷的動態。因此這兩類事件額外帶上 `before_frame_file`／
-`after_frame_file`：取 `7_clean/.../BEFORE` 裡最接近 DURING 開始的最後一幀、
-`AFTER` 裡最接近 DURING 結束的第一幀（同機位、同 `spatial_bbox` 座標，只是
-時間點不同），讓 VLM 能比較事件前中後的畫面差異（見
+`after_frame_file`：依「每一段自己的時間」取該段開始前、結束後各
+_CONTEXT_OFFSET_FRAMES 幀的乾淨畫面（從 BEFORE／DURING／AFTER 合併的索引裡
+往事件外側找最接近的一幀；同機位、同 `spatial_bbox` 座標，只是時間點不同），
+讓 VLM 能比較事件前中後的畫面差異。初版是整支影片共用一組（DURING 開始前／
+結束後），切段後跟第 2、3 段相隔十幾秒，比對失去意義，所以改掉（見
 vlm/observation_builder.py 的 prompt 組裝邏輯）。其餘兩類事件
 （`sprint_spike`／`crowd_locked`）沒有這個時間比對的需求，維持原本單張
 畫面的流程，這兩個欄位留 `None`。
@@ -150,6 +154,25 @@ _PEAK_CONFIG: Dict[str, Tuple[int, float]] = {
     "den": (100, 0.2),
 }
 
+# 沒有強度數值的類型（panic_scatter／counter_flow）無從找峰值，改用「時間
+# 間隔切段」：依 frame 排序後，相鄰訊號相隔超過這個幀數就切成新的一段。
+#
+# 門檻刻意跟 _PEAK_CONFIG 的最小間距同為 100 幀——兩者表達的是同一件事
+# （相隔不到約 3 秒的異常算同一起事件），全系統只有一個「同一起事件」的定義。
+#
+# 間隔切段對 sprint_spike 無效（frame 覆蓋率 96.6%，沒有空檔可切），但對這兩個
+# 類型有效：panic_scatter 覆蓋率只有 2.8%，兩個空檔分別是 204 與 163 幀，
+# 門檻在 15-150 幀之間都穩定切出同樣 3 段（見 analyze_event_segmentation.py）。
+#
+# 刻意不設「最小段落筆數」：強度下限有依據（能區分底噪與異常），筆數沒有——
+# counter_flow 全部只有 2 筆訊號，設了筆數門檻整個類型就會消失。
+_GAP_SPLIT_FRAMES = 100
+
+# 事件前後脈絡畫面：各段開始前／結束後各推這麼多幀（1 秒）。
+# 四散、逆流都是短時間內的變化，推太遠會混進別的事件
+# （例如 panic_scatter 第 2 段 frame 657 附近同時有 sprint_spike）。
+_CONTEXT_OFFSET_FRAMES = 30
+
 _CAPTION_TEMPLATE = (
     "【TinyFormer+SAM2 影像端偵測，聚合自逐幀原始訊號，非人工標註】"
     "來源影片：video 7，DURING 異常階段（frame 378-1086，約 12.6s-36.2s）。"
@@ -168,16 +191,20 @@ _CAPTION_TEMPLATE = (
 # 只有一波時不要講「共 1 波各自獨立的異常」這種贅詞，讀起來像系統壞掉
 _INTRO_MULTI = (
     "行為類型「{base_type}」在這段期間內共偵測到 {segment_total} 波各自獨立的"
-    "異常（依峰值強度與時間間距切分）；本筆是其中第 {segment_index} 波，"
+    "異常（{split_desc}）；本筆是其中第 {segment_index} 波，"
 )
 _INTRO_SINGLE = "行為類型「{base_type}」在這段期間內，"
 
-# 沒有強度數值的類型（panic_scatter／counter_flow）代表幀是取時間最早的
-# 一筆，不是「強度最高」——這裡如果沿用同一句話，等於在 caption 裡對 LLM
-# 謊稱有做過強度比較，違背整份 caption 刻意維持的誠實性。
+_SPLIT_DESC_METRIC = "依峰值強度與時間間距切分"
+_SPLIT_DESC_NO_METRIC = f"依訊號之間超過 {_GAP_SPLIT_FRAMES} 幀的時間空檔切分"
+
+# 沒有強度數值的類型（panic_scatter／counter_flow）代表幀是依「同幀涉及
+# 人數」選的，不是「強度最高」——這裡如果沿用同一句話，等於在 caption 裡對
+# LLM 謊稱有做過強度比較，違背整份 caption 刻意維持的誠實性。
 _PEAK_DESC_METRIC = "強度最高的單一瞬間"
 _PEAK_DESC_NO_METRIC = (
-    "時間最早的一個瞬間（此類型來源資料沒有強度數值，無從比較哪一筆最極端）"
+    "同一幀被標記人數最多的瞬間（此類型來源資料沒有強度數值，以同幀涉及人數"
+    "作為替代依據，人數相同時取時間最早者）"
 )
 
 _SCOPE_MULTI = "這一波"
@@ -215,8 +242,7 @@ def _detect_peaks(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     貪婪式峰值偵測：強度由高到低取訊號，只要跟已選的峰都相距
     >= 最小間距就收下，並且要先通過強度下限（見 _PEAK_CONFIG）。
 
-    沒有強度數值的類型（panic_scatter／counter_flow）無從比較，
-    回傳單一元素（第一筆），維持初版的行為。
+    只處理有強度數值的類型；沒有強度數值的類型走 _segment_by_gap()。
 
     注意：這段邏輯跟 scripts/analyze_event_segmentation.py 的 detect_peaks()
     刻意各留一份。那支是診斷腳本、會掃多組參數做比較，這支是產生正式資料
@@ -224,9 +250,6 @@ def _detect_peaks(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     為了十幾行邏輯把兩支腳本綁在一起不划算。改動演算法時兩邊都要改。
     """
     scored = [p for p in items if p["_value"] is not None]
-    if not scored:
-        return [items[0]]
-
     metric = scored[0]["_metric"]
     min_separation, min_value = _PEAK_CONFIG.get(metric, (100, float("-inf")))
 
@@ -270,6 +293,59 @@ def _partition_by_nearest_peak(
     return buckets
 
 
+def _segment_by_gap(
+    items: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[List[Dict[str, Any]]]]:
+    """
+    沒有強度數值的類型用的切段：依 frame 排序，相鄰訊號相隔超過
+    _GAP_SPLIT_FRAMES 就切成新的一段，每段再用 _pick_densest_frame() 選代表幀。
+
+    回傳 (代表, 各段訊號)，兩個 list 等長、順序一一對應，
+    跟 _detect_peaks() + _partition_by_nearest_peak() 的輸出形狀相同。
+    """
+    ordered = sorted(items, key=lambda p: p["frame_id"])
+    buckets: List[List[Dict[str, Any]]] = [[ordered[0]]]
+    for item in ordered[1:]:
+        if item["frame_id"] - buckets[-1][-1]["frame_id"] > _GAP_SPLIT_FRAMES:
+            buckets.append([])
+        buckets[-1].append(item)
+    return [_pick_densest_frame(bucket) for bucket in buckets], buckets
+
+
+def _pick_densest_frame(bucket: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    選「同一幀涉及人數最多」的那一幀當代表，人數相同時取最早。
+
+    沒有強度可比，同一時刻被標記的人數是最接近「異常程度」的替代指標；
+    而且四散、逆流是群體現象，畫面裡被標記的人越多，VLM 越有機會看出整體動態。
+
+    同一幀可能有多筆訊號（例如 panic_scatter 的 frame 828 有兩群人），
+    所以回傳的是合成的代表：bbox 取該幀所有訊號 bbox 的聯集——只取其中一筆
+    的框，裁切時另一群人會被切掉。
+    """
+    by_frame: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    for item in bucket:
+        by_frame[item["frame_id"]].append(item)
+
+    def member_count(frame_id: int) -> int:
+        return len({m for p in by_frame[frame_id] for m in p["member_ids"]})
+
+    best_frame = min(by_frame, key=lambda f: (-member_count(f), f))
+    signals = by_frame[best_frame]
+    boxes = [p["visual_prompt_bbox"] for p in signals]
+    return {
+        "frame_id": best_frame,
+        "visual_prompt_bbox": [
+            min(b[0] for b in boxes),
+            min(b[1] for b in boxes),
+            max(b[2] for b in boxes),
+            max(b[3] for b in boxes),
+        ],
+        "_metric": None,
+        "_value": None,
+    }
+
+
 def _build_caption(
     base_type: str,
     items: List[Dict[str, Any]],
@@ -298,6 +374,7 @@ def _build_caption(
         base_type=base_type,
         segment_total=segment_total,
         segment_index=segment_index,
+        split_desc=_SPLIT_DESC_METRIC if values else _SPLIT_DESC_NO_METRIC,
     )
 
     return _CAPTION_TEMPLATE.format(
@@ -323,28 +400,40 @@ def _load_clean_frame(peak_frame_id: int) -> bytes:
     return source_path.read_bytes()
 
 
-def _find_boundary_frame(directory: Path, pick_max: bool) -> Path:
+def _index_clean_frames() -> Dict[int, Path]:
     """
-    BEFORE 資料夾取最接近 DURING 開始的最後一幀（pick_max=True）；
-    AFTER 資料夾取最接近 DURING 結束的第一幀（pick_max=False）。
+    建立 BEFORE／DURING／AFTER 三個資料夾所有乾淨畫面的 frame_id -> 路徑索引。
+    三者是同一支影片的連續 frame_id，合在一起才能對任意時間點找最接近的畫面
+    （DURING 有 689/709 幀；BEFORE／AFTER 較稀疏，約每 15 幀一張）。
     """
-    candidates = [
-        (int(match.group(1)), path)
-        for path in directory.glob("frame_*.jpg")
-        if (match := _FRAME_ID_RE.search(path.name))
-    ]
-    if not candidates:
-        raise SystemExit(f"找不到任何畫面檔案：{directory}")
-    picker = max if pick_max else min
-    return picker(candidates, key=lambda c: c[0])[1]
+    index: Dict[int, Path] = {}
+    for directory in (_BEFORE_FRAMES_DIR, _CLEAN_FRAMES_DIR, _AFTER_FRAMES_DIR):
+        for path in directory.glob("frame_*.jpg"):
+            if match := _FRAME_ID_RE.search(path.name):
+                index[int(match.group(1))] = path
+    if not index:
+        raise SystemExit(f"找不到任何乾淨畫面檔案：{_CLEAN_DATASET_DIR}")
+    return index
 
 
-def _save_context_frame(kind: str, source_path: Path, frames_dir: Path) -> str:
-    """存 panic_scatter／counter_flow 共用的事件前／後脈絡畫面（只存一份，
-    兩個事件類型的 record 都指向同一個檔案）。"""
+def _find_context_frame(index: Dict[int, Path], target: int, before: bool) -> int:
+    """
+    找事件前／後的脈絡畫面：before=True 取 <= target 的最後一幀，
+    before=False 取 >= target 的第一幀。只往事件外側找，確保「前」一定
+    早於事件、「後」一定晚於事件；外側完全沒有畫面時才退回全影片的頭／尾。
+    """
+    if before:
+        candidates = [f for f in index if f <= target]
+        return max(candidates) if candidates else min(index)
+    candidates = [f for f in index if f >= target]
+    return min(candidates) if candidates else max(index)
+
+
+def _save_context_frame(frame_id: int, index: Dict[int, Path], frames_dir: Path) -> str:
+    """存事件前／後脈絡畫面；檔名依 frame_id，不同段落用到同一幀時共用一個檔案。"""
     frames_dir.mkdir(parents=True, exist_ok=True)
-    dest_filename = f"tinyformer7_context_{kind}.jpg"
-    (frames_dir / dest_filename).write_bytes(source_path.read_bytes())
+    dest_filename = f"tinyformer7_context_frame_{frame_id:05d}.jpg"
+    (frames_dir / dest_filename).write_bytes(index[frame_id].read_bytes())
     return dest_filename
 
 
@@ -382,35 +471,37 @@ def main() -> None:
     if not _CLEAN_FRAMES_DIR.exists():
         raise SystemExit(f"找不到乾淨畫面資料夾：{_CLEAN_FRAMES_DIR}")
 
-    before_source_path = _find_boundary_frame(_BEFORE_FRAMES_DIR, pick_max=True)
-    after_source_path = _find_boundary_frame(_AFTER_FRAMES_DIR, pick_max=False)
-    before_frame_file = _save_context_frame("before", before_source_path, frames_dir)
-    after_frame_file = _save_context_frame("after", after_source_path, frames_dir)
+    clean_index = _index_clean_frames()
 
     records = []
     print(f"來源：{_SOURCE_JSON}（共 {len(prompts)} 筆逐幀原始訊號，{len(grouped)} 種行為類型）")
-    print(f"乾淨畫面：{_CLEAN_FRAMES_DIR}")
+    print(f"乾淨畫面：{_CLEAN_DATASET_DIR}")
     print(
         f"事件前後脈絡畫面（僅 {sorted(_CONTEXT_FRAME_TYPES)} 使用）："
-        f"before={before_source_path.name}->{before_frame_file}，"
-        f"after={after_source_path.name}->{after_frame_file}\n"
+        f"各段開始前／結束後 {_CONTEXT_OFFSET_FRAMES} 幀\n"
     )
 
     for base_type, items in sorted(grouped.items(), key=lambda kv: -len(kv[1])):
-        peaks = _detect_peaks(items)
-        if not peaks:
-            metric = next(p["_metric"] for p in items if p["_value"] is not None)
-            _, min_value = _PEAK_CONFIG.get(metric, (100, float("-inf")))
-            print(
-                f"[{base_type}] 略過：整個類型的強度都低於下限"
-                f"（{metric} < {min_value}），不產生事件。"
-            )
-            continue
+        has_metric = any(p["_value"] is not None for p in items)
+        if has_metric:
+            peaks = _detect_peaks(items)
+            if not peaks:
+                metric = next(p["_metric"] for p in items if p["_value"] is not None)
+                _, min_value = _PEAK_CONFIG.get(metric, (100, float("-inf")))
+                print(
+                    f"[{base_type}] 略過：整個類型的強度都低於下限"
+                    f"（{metric} < {min_value}），不產生事件。"
+                )
+                continue
+            buckets = _partition_by_nearest_peak(items, peaks)
+            method = "峰值偵測"
+        else:
+            peaks, buckets = _segment_by_gap(items)
+            method = f"時間間隔 > {_GAP_SPLIT_FRAMES} 幀"
 
-        buckets = _partition_by_nearest_peak(items, peaks)
         segment_total = len(peaks)
 
-        print(f"[{base_type}] {len(items)} 筆原始訊號 -> 切出 {segment_total} 波事件")
+        print(f"[{base_type}] {len(items)} 筆原始訊號 -> 切出 {segment_total} 波事件（{method}）")
 
         for segment_index, (peak, bucket) in enumerate(zip(peaks, buckets), start=1):
             peak_frame_id = peak["frame_id"]
@@ -430,10 +521,22 @@ def main() -> None:
                 base_type, peak_frame_id, frame_bytes, bbox, frames_dir, frame_loader
             )
 
-            # 只有一波時維持原本的裸 record_id，讓 panic_scatter／counter_flow
-            # 這兩個沒有強度數值、行為不變的類型，record_id 不受這次修改影響
+            # 只有一波時維持原本的裸 record_id（例如 counter_flow），
+            # 讓只切出一段的類型 record_id 不受切段邏輯影響
             suffix = f"_p{segment_index}" if segment_total > 1 else ""
             has_context = base_type in _CONTEXT_FRAME_TYPES
+            before_frame_file = after_frame_file = None
+            context_note = ""
+            if has_context:
+                before_id = _find_context_frame(
+                    clean_index, bucket[0]["frame_id"] - _CONTEXT_OFFSET_FRAMES, before=True
+                )
+                after_id = _find_context_frame(
+                    clean_index, bucket[-1]["frame_id"] + _CONTEXT_OFFSET_FRAMES, before=False
+                )
+                before_frame_file = _save_context_frame(before_id, clean_index, frames_dir)
+                after_frame_file = _save_context_frame(after_id, clean_index, frames_dir)
+                context_note = f"，前後脈絡 frame {before_id}／{after_id}"
 
             records.append({
                 "record_id": f"tinyformer7_{base_type}{suffix}",
@@ -442,8 +545,8 @@ def main() -> None:
                 "member_count": len(members),
                 "frame_file": dest_filename,
                 "frame_idx": peak_frame_id,
-                "before_frame_file": before_frame_file if has_context else None,
-                "after_frame_file": after_frame_file if has_context else None,
+                "before_frame_file": before_frame_file,
+                "after_frame_file": after_frame_file,
                 "spatial_bbox": bbox,
                 "predicted_event_type": base_type,
                 "label_source": "tinyformer_sam2_zscore_unvalidated",
@@ -457,7 +560,6 @@ def main() -> None:
             })
 
             metric_note = f"，{peak['_metric']}={peak['_value']:.2f}" if peak["_value"] is not None else ""
-            context_note = "，含事件前後脈絡畫面" if has_context else ""
             print(
                 f"  └ 第 {segment_index}/{segment_total} 波："
                 f"{len(bucket)} 筆訊號 / {len(members)} 人{metric_note} -> "
