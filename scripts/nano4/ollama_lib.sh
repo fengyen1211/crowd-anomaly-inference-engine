@@ -32,7 +32,12 @@ start_ollama() {
     # llm/reasoning_pipeline.py 會同時送出推論與摘要兩個請求，Ollama 預設一次
     # 只處理 1 個，要設 2 才會真的平行
     export OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-2}
-    echo "OLLAMA_CONTEXT_LENGTH=$OLLAMA_CONTEXT_LENGTH  OLLAMA_NUM_THREAD=$OLLAMA_NUM_THREAD  OLLAMA_NUM_PARALLEL=$OLLAMA_NUM_PARALLEL"
+    # 預設最多同時載入 3 個 runner。驗證模型獨立後一組要 VLM＋驗證＋推論 3 個，
+    # sweep_565835 的 4b 組還多出一個 VLM runner（第一筆事件載入後就沒再用到、
+    # 但仍佔一格），VLM 與 qwen3:8b 每筆事件互相擠出、重新載入，初步警報從
+    # 約 2 秒變成 16 秒。H200 顯存還剩 120GB 以上，放寬上限
+    export OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS:-6}
+    echo "OLLAMA_CONTEXT_LENGTH=$OLLAMA_CONTEXT_LENGTH  OLLAMA_NUM_THREAD=$OLLAMA_NUM_THREAD  OLLAMA_NUM_PARALLEL=$OLLAMA_NUM_PARALLEL  OLLAMA_MAX_LOADED_MODELS=$OLLAMA_MAX_LOADED_MODELS"
 
     # 同一個節點可能同時有別人的 Ollama 在跑，用 job id 算出不衝突的 port，
     # 再透過 OLLAMA_BASE_URL 環境變數傳給 config/settings.py。
