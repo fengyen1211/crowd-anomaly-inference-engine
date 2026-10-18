@@ -51,8 +51,10 @@ def _full_view(frame: Image.Image, bbox) -> Image.Image:
 
 
 def _crop_view(frame: Image.Image, bbox) -> Image.Image:
-    """以事件框為中心放大局部，範圍至少 400x300，看得到周圍的人往哪裡動。"""
+    """以事件框為中心放大局部，範圍至少 400x300，看得到周圍的人往哪裡動；同樣畫出紅框。"""
     x1, y1, x2, y2 = bbox
+    frame = frame.convert("RGB").copy()
+    ImageDraw.Draw(frame).rectangle(bbox, outline=(255, 40, 40), width=2)
     cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
     half_w = max(200, (x2 - x1) * 1.25)
     half_h = max(150, (y2 - y1) * 1.25)
@@ -150,8 +152,8 @@ _TEMPLATE = """<!doctype html>
   <span class="progress" id="progress"></span>
   <button id="download">下載標註 JSON</button>
 </header>
-<p class="intro">每筆事件顯示峰值前後 1 秒內的 5 個時間點：上排是整張畫面（紅框是系統標出的位置），下排是放大的局部。
-點圖片可以放大。只依你在畫面上看到的回答；看不出來就選「看不出來」。填寫內容會暫存在這個瀏覽器，全部填完後按右上角下載。</p>
+<p class="intro">每筆事件顯示峰值前後 1 秒內的 5 個時間點：上排是整張畫面，下排是放大的局部，兩排的紅框都是系統標出異常的位置。
+<b>判斷對象是紅框內的人</b>；框外的人只當作周圍情況參考（例如是不是大家都在跑、是不是在表演）。點圖片可以放大。只依你在畫面上看到的回答；看不出來就選「看不出來」。填寫內容會暫存在這個瀏覽器，全部填完後按右上角下載。</p>
 <div id="events"></div>
 </main>
 <div class="zoom" id="zoom"><img alt=""></div>
