@@ -123,14 +123,18 @@ def _severity(event_type: str, rejected: bool, confirmed: bool, confidence: floa
 
     規則（由上而下依序判斷，符合就回傳，不繼續往下比對）：
     1. 規則系統的判斷被推翻（rejected）-> 原本的異常判斷不成立 -> info
-    2. 恐慌性移動（見 _PANIC_EVENT_TYPES）且信心夠高 -> 影響人身安全風險最高 -> critical
+    2. 恐慌性移動（見 _PANIC_EVENT_TYPES）判斷成立且信心夠高 -> 影響人身安全風險最高 -> critical
     3. 判斷維持成立（confirmed）且信心夠高 -> warning
     4. 其餘情況（uncertain、信心不足...）-> info，避免誤報造成不必要的恐慌
+
+    confidence 是「對這個判定本身」的信心，不是「事件為真」的機率：uncertain
+    搭配 0.7 代表「有七成把握無法確定」。所以第 2 條也要求 confirmed，否則
+    uncertain 0.7 會被升成 critical（sweep 565487 的 panic_scatter_p3 就是這樣）。
     """
     if rejected:
         return AlertSeverity.INFO
 
-    if event_type in _PANIC_EVENT_TYPES and confidence >= 0.7:
+    if event_type in _PANIC_EVENT_TYPES and confirmed and confidence >= 0.7:
         return AlertSeverity.CRITICAL
 
     if confirmed and confidence >= 0.6:
