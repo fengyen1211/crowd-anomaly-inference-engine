@@ -17,6 +17,10 @@ llm/visual_verifier.py 依描述文字填入。
 但 qwen2.5vl:3b 幾乎一律回答 support、信心 0.90，描述也被系統給的行為
 說明帶偏，所以 prompt 刻意維持「只描述、不判斷」（見
 prompts/verification_prompt.py 的說明）。
+
+prompt 也不告訴 VLM 系統判斷的事件類型：sweep_565835 裡 qwen2.5vl:3b 在
+描述中直接寫出「這類行為可以被歸類為 counter_flow」，驗證模型便據此判成
+support。描述必須獨立於規則系統，驗證才有意義。
 """
 
 from typing import List, Optional
@@ -41,8 +45,8 @@ class VLMObservationBuilder:
         Args:
             vlm_client: 已注入好的 VLM 實作（依賴抽象介面 BaseVLM）。
             image: 事件對應的畫面（通常是裁切後的區域）。
-            record: 影像端輸出的原始事件資料，提供 predicted_event_type
-                    作為描述時的參考問題。
+            record: 影像端輸出的原始事件資料（只用 record_id，事件類型
+                    刻意不放進 prompt，見檔案頂端說明）。
             context_images: 額外的脈絡畫面（依序為事件發生前／後的同機位
                     畫面），只有 panic_scatter／counter_flow 這類需要跨時間
                     比對的行為類型才會有值（見 RawEventRecord.before_frame_file
@@ -55,16 +59,13 @@ class VLMObservationBuilder:
             prompt = (
                 f"你會依序看到 {1 + len(context_images)} 張同一位置的畫面："
                 f"第一張是事件發生當下，接下來依序是事件發生前、事件發生後的畫面。"
-                f"系統判斷這是「{record.predicted_event_type}」，這類行為需要"
-                f"比對人群隨時間的變化（例如是否明顯聚集、四散、或反方向移動）"
-                f"才能判斷。請客觀比較這幾張畫面，描述群體行為與動態上的差異，"
-                f"只描述你實際看到的內容，不需要判斷是否同意這個標籤。"
+                f"請客觀比較這幾張畫面中人群隨時間的變化，包括人群的分布與疏密、"
+                f"人的動作、移動的方向與速度，只描述你實際看到的內容。"
             )
         else:
             prompt = (
-                f"請客觀描述這張畫面中群體的行為與動態。"
-                f"系統判斷這可能是「{record.predicted_event_type}」，"
-                f"但請只描述你實際看到的內容，不需要判斷是否同意這個標籤。"
+                "請客觀描述這張畫面中群體的行為與動態，包括人群的分布與疏密、"
+                "人的動作、移動的方向與速度，只描述你實際看到的內容。"
             )
         description = _truncate_repetition(
             vlm_client.describe_image(image, prompt=prompt, context_images=context_images)
