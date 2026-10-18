@@ -1,9 +1,16 @@
 """
 scripts/make_label_sheet.py
 ==============================
-產生人工標註用的本機網頁：每筆事件並排顯示峰值前後 1 秒內 5 個時間點的
-畫面（整張畫面標出事件位置，加上放大的局部），讓人判斷「系統說的行為
-是否真的發生」與「實際危險程度」，標註結果在網頁上下載成 JSON。
+產生人工標註用的本機網頁：每筆事件先放一段峰值前後各 5 秒的影片片段
+（從原始影片 0901/7.mp4 剪出、標出事件位置、可以慢速播放），再並排峰值前後
+1 秒內 5 個時間點的畫面，讓人判斷「系統說的行為是否真的發生」與「實際
+危險程度」，標註結果在網頁上下載成 JSON。
+
+第一版只有 5 張畫面。標註者回饋：只看靜止畫面，人也很難判斷速度與方向，
+所以加上影片片段；結果另存 labels_video7_clips.json，不覆蓋第一版。
+
+幀編號：資料集的 frame_id 以 30fps 計（frame_id / 30 = 秒），原始影片是
+24fps，影片幀 = frame_id × 0.8（frame 657 對應影片第 525 幀，已用畫面比對確認）。
 
 為什麼需要：到 sweep_566003 為止，模型組合、prompt、驗證模型的比較都沒有
 標準答案，只能靠讀描述文字推測誰對誰錯；這份標註就是之後算準確率的依據。
@@ -17,7 +24,11 @@ scripts/make_label_sheet.py
 """
 
 import json
+import shutil
 import sys
+import tempfile
+
+import cv2
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -28,6 +39,10 @@ from scripts.build_tinyformer_events import _find_context_frame, _index_clean_fr
 
 _PROJECT_DIR = Path(__file__).resolve().parent.parent
 _EVENTS_PATH = _PROJECT_DIR / "data" / "tinyformer7_events.json"
+_VIDEO_PATH = _PROJECT_DIR.parent / "0901" / "7.mp4"
+# 資料集 frame_id 的時間基準（見檔案頂端說明）
+_DATASET_FPS = 30
+_CLIP_HALF_SEC = 5
 _OUTPUT_DIR = _PROJECT_DIR / "reports" / "label_sheet"
 
 # 峰值前後的幀數偏移：影片 30fps，等於 -1、-0.5、0、+0.5、+1 秒
@@ -69,11 +84,52 @@ def _crop_view(frame: Image.Image, bbox) -> Image.Image:
     return crop.resize((480, int(crop.height * scale)))
 
 
+def _write_clip(cap, out_path: Path, peak_frame_id: int, bbox) -> None:
+    """剪出峰值前後各 _CLIP_HALF_SEC 秒，畫上事件框與相對峰值的時間。"""
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    peak = round(peak_frame_id / _DATASET_FPS * fps)
+    start, end = max(0, peak - int(_CLIP_HALF_SEC * fps)), min(total - 1, peak + int(_CLIP_HALF_SEC * fps))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start)
+    scale = 960 / cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+    size = (960, int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) * scale))
+    # OpenCV 在 Windows 上寫不進含中文的路徑（例如「畢業專題」）而且不會報錯，
+    # 先寫到系統暫存資料夾再搬過去
+    tmp_path = Path(tempfile.gettempdir()) / f"label_clip_{out_path.name}"
+    writer = cv2.VideoWriter(str(tmp_path), cv2.VideoWriter_fourcc(*"avc1"), fps, size)
+    if not writer.isOpened():
+        raise SystemExit("無法建立 H.264 影片（cv2.VideoWriter avc1）")
+    x1, y1, x2, y2 = [int(v * scale) for v in bbox]
+    for idx in range(start, end + 1):
+        ok, frame = cap.read()
+        if not ok:
+            break
+        frame = cv2.resize(frame, size)
+        rel = (idx - peak) / fps
+        # 框是峰值那一幀的位置；峰值前後 0.5 秒內加粗，提示「就是這個時候」
+        near_peak = abs(rel) <= 0.5
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (40, 40, 255), 3 if near_peak else 1)
+        text = "PEAK" if abs(rel) < 0.5 / fps else f"{rel:+.1f}s"
+        # 放右下角：原始影片左上角有編輯軟體的「VEED」浮水印
+        org = (size[0] - 170, size[1] - 20)
+        cv2.putText(frame, text, org, cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 0, 0), 5)
+        cv2.putText(frame, text, org, cv2.FONT_HERSHEY_SIMPLEX, 1.1,
+                    (40, 40, 255) if near_peak else (255, 255, 255), 2)
+        writer.write(frame)
+    writer.release()
+    shutil.move(str(tmp_path), out_path)
+
+
 def main() -> None:
     records = json.loads(_EVENTS_PATH.read_text(encoding="utf-8"))["records"]
     index = _index_clean_frames()
     img_dir = _OUTPUT_DIR / "img"
     img_dir.mkdir(parents=True, exist_ok=True)
+    clip_dir = _OUTPUT_DIR / "clips"
+    clip_dir.mkdir(parents=True, exist_ok=True)
+    cap = cv2.VideoCapture(str(_VIDEO_PATH))
+    if not cap.isOpened():
+        raise SystemExit(f"找不到原始影片：{_VIDEO_PATH}")
 
     events = []
     for record in records:
@@ -94,8 +150,10 @@ def main() -> None:
                 "full": f"img/{full_name}",
                 "crop": f"img/{crop_name}",
             })
+        _write_clip(cap, clip_dir / f"{rid}.mp4", peak, bbox)
         event_type = record["predicted_event_type"]
         events.append({
+            "clip": f"clips/{rid}.mp4",
             "record_id": rid,
             "event_type": event_type,
             "hint": _EVENT_HINTS.get(event_type, ""),
@@ -131,6 +189,10 @@ _TEMPLATE = """<!doctype html>
   section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:24px; }
   h2 { font-size:17px; margin:0 0 4px; }
   .hint { color:var(--muted); margin-bottom:12px; }
+  video { width:100%; max-width:960px; display:block; border-radius:6px; background:#000; }
+  .speed { margin:6px 0 4px; }
+  .speed button { padding:2px 10px; margin-right:6px; background:transparent; color:var(--fg); border-color:var(--line); }
+  .speed button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
   .strip { display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:6px; }
   .strip figure { margin:0; }
   .strip img { width:100%; display:block; border-radius:4px; cursor:zoom-in; }
@@ -152,14 +214,16 @@ _TEMPLATE = """<!doctype html>
   <span class="progress" id="progress"></span>
   <button id="download">下載標註 JSON</button>
 </header>
-<p class="intro">每筆事件顯示峰值前後 1 秒內的 5 個時間點：上排是整張畫面，下排是放大的局部，兩排的紅框都是系統標出異常的位置。
-<b>判斷對象是紅框內的人</b>；框外的人只當作周圍情況參考（例如是不是大家都在跑、是不是在表演）。點圖片可以放大。只依你在畫面上看到的回答；看不出來就選「看不出來」。填寫內容會暫存在這個瀏覽器，全部填完後按右上角下載。</p>
+<p class="intro">每筆事件先看<b>峰值前後各 5 秒的影片</b>（右下角是相對峰值的時間，峰值前後 0.5 秒紅框會加粗），可以切換慢速播放；
+下方再附峰值前後 1 秒內 5 個時間點的畫面供對照。紅框是系統在峰值那一刻標出異常的位置（框是固定的，人會移動）。
+<b>判斷對象是峰值時紅框內的人</b>；框外的人只當作周圍情況參考（例如是不是大家都在跑、是不是在表演）。點圖片可以放大。
+這一版的答案跟上一版（只有照片）分開存，請依影片重新判斷。只依你在畫面上看到的回答；看不出來就選「看不出來」。填寫內容會暫存在這個瀏覽器，全部填完後按右上角下載。</p>
 <div id="events"></div>
 </main>
 <div class="zoom" id="zoom"><img alt=""></div>
 <script>
 const EVENTS = __EVENTS__;
-const KEY = "label_sheet_video7";
+const KEY = "label_sheet_video7_clips";
 let labels = {};
 try { labels = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { labels = {}; }
 
@@ -186,6 +250,8 @@ EVENTS.forEach((ev, i) => {
   sec.innerHTML = `
     <h2>${i + 1}. ${ev.record_id}</h2>
     <div class="hint">系統判斷：<b>${ev.event_type}</b>（${ev.hint}）</div>
+    <video src="${ev.clip}" controls loop muted playsinline preload="metadata"></video>
+    <div class="speed">播放速度：<button data-rate="0.25">0.25×</button><button data-rate="0.5">0.5×</button><button data-rate="1" class="on">1×</button></div>
     <div class="row-label">整張畫面</div><div class="strip">${figs("full")}</div>
     <div class="row-label">放大局部</div><div class="strip">${figs("crop")}</div>
     <div class="q">
@@ -209,6 +275,12 @@ container.addEventListener("input", e => {
 
 const zoom = document.getElementById("zoom");
 container.addEventListener("click", e => {
+  if (e.target.dataset.rate) {
+    const sec = e.target.closest("section");
+    sec.querySelector("video").playbackRate = Number(e.target.dataset.rate);
+    sec.querySelectorAll(".speed button").forEach(b => b.classList.toggle("on", b === e.target));
+    return;
+  }
   if (e.target.tagName === "IMG") { zoom.querySelector("img").src = e.target.src; zoom.style.display = "flex"; }
 });
 zoom.addEventListener("click", () => { zoom.style.display = "none"; });
@@ -216,13 +288,14 @@ zoom.addEventListener("click", () => { zoom.style.display = "none"; });
 document.getElementById("download").addEventListener("click", () => {
   const out = {
     video: "video7",
+    method: "10s clips + 5 frames",
     labeled_at: new Date().toISOString(),
     labels: EVENTS.map(ev => ({ record_id: ev.record_id, event_type: ev.event_type, ...(labels[ev.record_id] || {}) })),
   };
   const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "labels_video7.json";
+  a.download = "labels_video7_clips.json";
   a.click();
 });
 save();
