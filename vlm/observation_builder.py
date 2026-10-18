@@ -66,7 +66,9 @@ class VLMObservationBuilder:
                 f"系統判斷這可能是「{record.predicted_event_type}」，"
                 f"但請只描述你實際看到的內容，不需要判斷是否同意這個標籤。"
             )
-        description = vlm_client.describe_image(image, prompt=prompt, context_images=context_images)
+        description = _truncate_repetition(
+            vlm_client.describe_image(image, prompt=prompt, context_images=context_images)
+        )
 
         return VLMObservation(
             record_id=record.record_id,
@@ -77,3 +79,37 @@ class VLMObservationBuilder:
             visual_confidence=0.5,
             extra_context=[],
         )
+
+
+def _truncate_repetition(text: str, min_run: int = 3) -> str:
+    """
+    VLM 陷入重複迴圈時，從開始重複的地方截斷。
+
+    num_predict 上限只保證會停下來，不保證內容可用：verifiers_565780 裡
+    qwen2.5vl:7b 對 counter_flow 把「穿白色上衣的人在階梯上向右側移動」等
+    幾行重複列了幾十次直到上限，下游驗證模型全都因為「有人往左、有人往右」
+    判成 support。
+
+    判斷方式：某一行跟前面某一行相同，而且接下來連續 min_run 行都跟前面
+    那段一一相同，就視為進入迴圈。單獨一行重複（例如前後兩段都寫「環境
+    比較平靜」）不算，不會被截掉。
+    """
+    lines = text.split("\n")
+    seen = {}
+    for i, line in enumerate(lines):
+        key = line.strip()
+        if not key:
+            continue
+        for j in seen.get(key, []):
+            run = 0
+            while (
+                i + run < len(lines)
+                and j + run < i
+                and lines[i + run].strip()
+                and lines[i + run].strip() == lines[j + run].strip()
+            ):
+                run += 1
+            if run >= min_run:
+                return "\n".join(lines[:i]).rstrip()
+        seen.setdefault(key, []).append(i)
+    return text
