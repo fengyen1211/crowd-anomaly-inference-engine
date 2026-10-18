@@ -1,0 +1,76 @@
+{
+  "video": "video7",
+  "labeled_at": "2026-10-18T12:02:42.768Z",
+  "labels": [
+    {
+      "record_id": "tinyformer7_sprint_spike_p1",
+      "event_type": "sprint_spike",
+      "occurred": "yes",
+      "danger": "attention",
+      "note": "可能現場發生了一些突發狀況或是那個人本身有急事導致需要快速離開現場，但是系統沒有完全框到人"
+    },
+    {
+      "record_id": "tinyformer7_sprint_spike_p2",
+      "event_type": "sprint_spike",
+      "occurred": "yes",
+      "danger": "attention",
+      "note": "一個人突然轉頭向外奔跑，但系統沒有完全框到人"
+    },
+    {
+      "record_id": "tinyformer7_sprint_spike_p3",
+      "event_type": "sprint_spike",
+      "occurred": "no",
+      "danger": "none",
+      "note": "系統沒有正確的框出同樣的人甚至沒有框到人"
+    },
+    {
+      "record_id": "tinyformer7_sprint_spike_p4",
+      "event_type": "sprint_spike",
+      "occurred": "no",
+      "danger": "none",
+      "note": "系統從frame 1038開始就框到影子了"
+    },
+    {
+      "record_id": "tinyformer7_crowd_locked_p1",
+      "event_type": "crowd_locked",
+      "occurred": "yes",
+      "danger": "attention",
+      "note": "一群人擠在一起並往同方向移動"
+    },
+    {
+      "record_id": "tinyformer7_crowd_locked_p2",
+      "event_type": "crowd_locked",
+      "occurred": "no",
+      "danger": "none",
+      "note": "框起來的地方最多只有兩個人甚至更少"
+    },
+    {
+      "record_id": "tinyformer7_panic_scatter_p1",
+      "event_type": "panic_scatter",
+      "occurred": "yes",
+      "danger": "danger",
+      "note": "一群人往四周逃跑"
+    },
+    {
+      "record_id": "tinyformer7_panic_scatter_p2",
+      "event_type": "panic_scatter",
+      "occurred": "yes",
+      "danger": "danger",
+      "note": "一群人往四周逃散"
+    },
+    {
+      "record_id": "tinyformer7_panic_scatter_p3",
+      "event_type": "panic_scatter",
+      "danger": "danger",
+      "occurred": "yes",
+      "note": "一群人往四周逃跑"
+    },
+    {
+      "record_id": "tinyformer7_counter_flow",
+      "event_type": "counter_flow",
+      "occurred": "unsure",
+      "danger": "none",
+      "note": "一群人往四周移動，看起來是隨機的移動"
+    }
+  ]
+}
