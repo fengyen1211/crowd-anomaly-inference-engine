@@ -4,9 +4,16 @@ services/alert_service.py
 對應架構設計中的 [6] Alert Composer。
 
 負責：
-- 依 AnalysisResult（final_verdict / final_confidence / event_type）
-  套用規則，決定警報等級（info / warning / critical）
+- 依事件類型與驗證結論（llm/visual_verifier.py 的 verification_verdict /
+  visual_confidence）套用規則，決定警報等級（info / warning / critical）
 - 組成給 Web 介面顯示的警報內容（標題/簡短訊息/完整報告）
+
+最終警報的等級跟初步警報一樣只看驗證結論，不看推論 LLM 的 final_verdict。
+sweep_565835 裡 gemma3:4b 的推論把驗證判為 contradict（描述寫「觀眾隨音樂
+擺動，沒有明顯四散」）的 panic_scatter 事件判成 confirmed、升成 critical；
+固定描述比較（verifiers_565780）也顯示專職驗證的 qwen3:8b 判斷比推論 LLM
+可靠。所以推論 LLM 只負責摘要、可能原因與應變建議，它的判定寫進報告供
+參考，不改變等級——最終警報與初步警報的等級因此一致。
 
 ★ 這個模組是「純規則邏輯」，不需要任何 LLM/VLM 呼叫 ★
 警報等級不應該受 LLM 生成內容不穩定性影響，規則判斷比較可預測、
@@ -16,7 +23,7 @@ prompts/alert_prompt.py + LLM（那是「表達」而不是「決策」，
 應該是可選的加強，不應該取代這裡的規則判斷）。
 """
 
-from llm.schemas import AnalysisResult, FinalVerdict
+from llm.schemas import AnalysisResult
 from utils.logger import get_logger
 from utils.schemas import Alert, AlertSeverity, PredictedEventType, RawEventRecord
 from vlm.schemas import VerificationVerdict, VLMObservation
@@ -35,19 +42,26 @@ class AlertComposerService:
     依規則將 AnalysisResult 轉換成 Alert。
     """
 
-    def compose(self, event_record: RawEventRecord, analysis_result: AnalysisResult) -> Alert:
+    def compose(
+        self,
+        event_record: RawEventRecord,
+        analysis_result: AnalysisResult,
+        vlm_observation: VLMObservation,
+    ) -> Alert:
         """
-        組成最終的警報內容。
+        組成最終的警報內容：等級依驗證結論（見檔案頂端說明），文字來自推論 LLM。
         """
-        severity = self._decide_severity(event_record, analysis_result)
+        severity = _severity_from_verification(event_record, vlm_observation)
 
         title = f"[{severity.value.upper()}] {event_record.predicted_event_type} 事件"
         short_message = analysis_result.summary
         full_report = "\n".join(
             [
                 f"事件摘要：{analysis_result.summary}",
-                f"最終判定：{analysis_result.final_verdict.value}"
-                f"（信心分數：{analysis_result.final_confidence:.2f}）",
+                f"視覺驗證：{vlm_observation.verification_verdict.value}"
+                f"（信心分數：{vlm_observation.visual_confidence:.2f}，決定警報等級）",
+                f"推論模型判定：{analysis_result.final_verdict.value}"
+                f"（信心分數：{analysis_result.final_confidence:.2f}，僅供參考）",
                 "可能原因：" + "、".join(analysis_result.possible_causes),
                 "應變建議：" + "、".join(analysis_result.recommended_actions),
             ]
@@ -72,18 +86,10 @@ class AlertComposerService:
         """
         只依規則系統標籤與 VLM 驗證結論組成「初步警報」，不等 RAG + LLM。
 
-        等級規則跟最終警報相同（見 _severity()），只是把 LLM 綜合 RAG 後的
-        final_verdict 換成 verification_verdict（llm/visual_verifier.py 依
-        VLM 描述判斷，不做 RAG）：support 對應
-        confirmed、contradict 對應 overturned。最終警報出來後以最終警報為準，
-        等級可能升高也可能降低。
+        等級跟最終警報用同一套規則、同一個依據（見 _severity_from_verification()），
+        所以兩者等級相同；最終警報只是補上摘要、原因與應變建議。
         """
-        severity = _severity(
-            event_record.predicted_event_type,
-            rejected=vlm_observation.verification_verdict == VerificationVerdict.CONTRADICT,
-            confirmed=vlm_observation.verification_verdict == VerificationVerdict.SUPPORT,
-            confidence=vlm_observation.visual_confidence,
-        )
+        severity = _severity_from_verification(event_record, vlm_observation)
 
         alert = Alert(
             record_id=event_record.record_id,
@@ -107,19 +113,21 @@ class AlertComposerService:
         )
         return alert
 
-    def _decide_severity(self, event_record: RawEventRecord, analysis_result: AnalysisResult) -> AlertSeverity:
-        return _severity(
-            event_record.predicted_event_type,
-            rejected=analysis_result.final_verdict == FinalVerdict.OVERTURNED,
-            confirmed=analysis_result.final_verdict == FinalVerdict.CONFIRMED,
-            confidence=analysis_result.final_confidence,
-        )
+
+
+def _severity_from_verification(event_record: RawEventRecord, vlm_observation: VLMObservation) -> AlertSeverity:
+    """依驗證結論決定等級：support 視為判斷成立、contradict 視為被推翻。"""
+    return _severity(
+        event_record.predicted_event_type,
+        rejected=vlm_observation.verification_verdict == VerificationVerdict.CONTRADICT,
+        confirmed=vlm_observation.verification_verdict == VerificationVerdict.SUPPORT,
+        confidence=vlm_observation.visual_confidence,
+    )
 
 
 def _severity(event_type: str, rejected: bool, confirmed: bool, confidence: float) -> AlertSeverity:
     """
-    純規則邏輯，依事件類型、判定與信心分數決定嚴重程度。初步警報（VLM 判定）
-    與最終警報（LLM 判定）共用同一套規則，兩者的等級才能直接比較。
+    純規則邏輯，依事件類型、判定與信心分數決定嚴重程度。
 
     規則（由上而下依序判斷，符合就回傳，不繼續往下比對）：
     1. 規則系統的判斷被推翻（rejected）-> 原本的異常判斷不成立 -> info

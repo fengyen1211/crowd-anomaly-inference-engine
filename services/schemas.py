@@ -25,6 +25,6 @@ class PipelineOutput(BaseModel):
     possible_causes: List[str]
     recommendation: List[str]
     alert_level: AlertSeverity
-    # 只依規則系統標籤與 VLM 驗證結論產生的初步警報等級（見
-    # AlertComposerService.compose_preliminary()），可能跟 alert_level 不同
+    # 初步警報等級（見 AlertComposerService.compose_preliminary()）。跟
+    # alert_level 依同一個驗證結論決定，正常情況下兩者相同
     preliminary_alert_level: Optional[AlertSeverity] = None

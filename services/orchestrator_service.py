@@ -184,8 +184,8 @@ class OrchestratorService:
         # 7. LLM：綜合以上所有資訊，產生摘要、驗證判定、可能原因、應變建議
         analysis_result = self._reasoning_pipeline.run(record, vlm_observation, retrieved_context)
 
-        # 8. Alert：純規則邏輯決定警報等級
-        alert = self._alert_service.compose(record, analysis_result)
+        # 8. Alert：純規則邏輯依驗證結論決定警報等級（推論 LLM 的判定只寫進報告）
+        alert = self._alert_service.compose(record, analysis_result, vlm_observation)
 
         logger.info("Orchestrator 完成處理 record_id=%s alert_level=%s", record.record_id, alert.severity.value)
 
