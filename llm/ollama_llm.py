@@ -62,7 +62,10 @@ class OllamaLLMClient(BaseLLMClient):
                        有一半回應直接輸出 2 個 token 的空物件，欄位全部缺失。
             **kwargs: 其餘參數原樣放進 Ollama 的 options（例如 temperature）。
         """
-        payload = {"model": self._model, "messages": messages, "stream": False}
+        # think=False：qwen3 這類思考模型預設會先輸出一段思考，搭配 format 的
+        # JSON 限制時，本機 qwen3:4b 一筆驗證跑了 20 分鐘仍沒有結果；關掉後約
+        # 12 秒。gemma3 這類不會思考的模型會忽略這個參數。
+        payload = {"model": self._model, "messages": messages, "stream": False, "think": False}
         if json_schema is not None:
             payload["format"] = json_schema
         options = dict(kwargs)
