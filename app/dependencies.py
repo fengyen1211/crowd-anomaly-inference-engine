@@ -77,6 +77,19 @@ def get_llm_client(app_config: Optional[AppConfig] = None) -> BaseLLMClient:
 
 
 @lru_cache
+def get_verifier_client(app_config: Optional[AppConfig] = None) -> BaseLLMClient:
+    """
+    初步警報驗證用的 LLM（config.yaml 的 verifier 區塊或 VERIFIER_MODEL）。
+    沒有設定時回傳 get_llm_client() 的同一個實例，行為跟分開前一樣。
+    """
+    app_config = app_config or load_config()
+    if app_config.verifier is None:
+        return get_llm_client()
+    verifier_config = app_config.verifier
+    return LLMFactory.create(verifier_config.provider, model=verifier_config.model)
+
+
+@lru_cache
 def get_embedding_client(app_config: Optional[AppConfig] = None) -> BaseEmbeddingProvider:
     """
     依 config.yaml 的 embedding 區塊，透過 EmbeddingFactory 建立對應實作。
@@ -241,7 +254,7 @@ def get_orchestrator_service() -> OrchestratorService:
         ingestion_service=get_ingestion_service(),
         frame_service=get_frame_service(),
         vlm_client=get_vlm_client(),
-        visual_verifier=VisualVerifier(get_llm_client()),
+        visual_verifier=VisualVerifier(get_verifier_client()),
         visual_embedding_provider=get_visual_embedding_client(),
         visual_retriever=get_visual_retriever(),
         text_retriever=get_text_retriever(),

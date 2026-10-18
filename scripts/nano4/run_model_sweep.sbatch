@@ -17,6 +17,11 @@
 # 原本還有 qwen2.5vl:72b 的兩組（vlm_72b、both_big），但 72b 權重約 49GB，
 # 加上其他模型與 conda 環境會超過 /work 的 100GB 免費額度，先拿掉。
 #
+# 初步警報的驗證模型（llm/visual_verifier.py）四組都固定用 VERIFIER_MODEL，
+# 預設 qwen3:8b：verifiers_565780 固定描述比較 5 個模型，qwen3:8b／14b 判斷
+# 最可靠，8b 跟 14b 給出的警報等級完全相同、又比較快。設成空字串
+#（VERIFIER_MODEL= sbatch ...）就改回跟各組的 LLM 共用。
+#
 # 使用方式（在登入節點，project/ 目錄下執行）：
 #     sbatch -A <計畫代號> --mail-user=<email> scripts/nano4/run_model_sweep.sbatch
 #     sbatch -A <計畫代號> --mail-user=<email> scripts/nano4/run_model_sweep.sbatch \
@@ -43,6 +48,8 @@
 set -eo pipefail   # 不用 -u：conda activate 會讀到未定義的變數而中斷
 
 INPUT=${1:-data/tinyformer7_events.json}
+# 用 - 而不是 :-，讓「明確設成空字串」可以關掉獨立驗證模型
+export VERIFIER_MODEL=${VERIFIER_MODEL-qwen3:8b}
 
 # 組名 VLM LLM
 ARMS=(
@@ -68,7 +75,7 @@ source scripts/nano4/ollama_lib.sh
 start_ollama
 
 # ---------- 先把所有用得到的模型下載好 ----------
-for model in $(printf '%s\n' "${ARMS[@]}" | awk '{print $2; print $3}' | sort -u); do
+for model in $( (printf '%s\n' "${ARMS[@]}" | awk '{print $2; print $3}'; echo "$VERIFIER_MODEL") | grep . | sort -u); do
     echo "下載／檢查模型：$model"
     "$OLLAMA_BIN" pull "$model"
 done
@@ -81,7 +88,7 @@ FAILED=()
 for arm in "${ARMS[@]}"; do
     read -r name vlm llm <<< "$arm"
     echo ""
-    echo "================ $name：VLM=$vlm  LLM=$llm ================"
+    echo "================ $name：VLM=$vlm  LLM=$llm  驗證=${VERIFIER_MODEL:-$llm} ================"
     if VLM_MODEL=$vlm LLM_MODEL=$llm \
         python scripts/run_tinyformer_batch.py --input "$INPUT" --output "$OUT_DIR/$name.json"; then
         :

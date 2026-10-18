@@ -96,12 +96,16 @@ def main() -> None:
 
     total_elapsed = time.time() - overall_start
 
-    # 對照實驗會用 VLM_MODEL / LLM_MODEL 覆寫模型，報告裡記下實際用了哪組，
+    # 對照實驗會用 VLM_MODEL / LLM_MODEL / VERIFIER_MODEL 覆寫模型，報告裡記下實際用了哪組，
     # 之後比對報告時不用靠檔名猜
     app_config = load_config()
     report = {
         "source": f"0901/tinyformer_events_7.json -> {input_path.name}",
-        "models": {"vlm": app_config.vlm.model, "llm": app_config.llm.model},
+        "models": {
+            "vlm": app_config.vlm.model,
+            "llm": app_config.llm.model,
+            "verifier": (app_config.verifier or app_config.llm).model,
+        },
         "total_records": len(records),
         "total_elapsed_sec": round(total_elapsed, 1),
         "results": results,

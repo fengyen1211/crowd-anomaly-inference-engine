@@ -45,6 +45,9 @@ class AppConfig(BaseModel):
     visual_embedding: ProviderConfig
     llm: ProviderConfig
     vlm: ProviderConfig
+    # 初步警報的驗證模型（llm/visual_verifier.py）。沒設定就跟 llm 用同一個；
+    # 驗證只是短短一次判斷，可以換成比推論 LLM 更準或更快的模型
+    verifier: Optional[ProviderConfig] = None
 
 
 @lru_cache
@@ -66,4 +69,12 @@ def load_config(config_path: Optional[Path] = None) -> AppConfig:
         override = os.environ.get(env_name)
         if override:
             getattr(config, section).model = override
+
+    # VERIFIER_MODEL：config.yaml 沒有 verifier 區塊時，沿用 llm 的 provider
+    verifier_override = os.environ.get("VERIFIER_MODEL")
+    if verifier_override:
+        if config.verifier is None:
+            config.verifier = ProviderConfig(provider=config.llm.provider, model=verifier_override)
+        else:
+            config.verifier.model = verifier_override
     return config
