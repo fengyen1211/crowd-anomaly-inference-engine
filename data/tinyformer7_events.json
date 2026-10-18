@@ -123,8 +123,8 @@
       "member_count": 115,
       "frame_file": "tinyformer7_sprint_spike_frame_00487.jpg",
       "frame_idx": 487,
-      "before_frame_file": null,
-      "after_frame_file": null,
+      "before_frame_file": "tinyformer7_context_frame_00472.jpg",
+      "after_frame_file": "tinyformer7_context_frame_00502.jpg",
       "spatial_bbox": [
         498.4530334472656,
         567.8296508789062,
@@ -756,8 +756,8 @@
       "member_count": 94,
       "frame_file": "tinyformer7_sprint_spike_frame_00657.jpg",
       "frame_idx": 657,
-      "before_frame_file": null,
-      "after_frame_file": null,
+      "before_frame_file": "tinyformer7_context_frame_00642.jpg",
+      "after_frame_file": "tinyformer7_context_frame_00672.jpg",
       "spatial_bbox": [
         664.6007080078125,
         293.7582702636719,
@@ -1392,8 +1392,8 @@
       "member_count": 97,
       "frame_file": "tinyformer7_sprint_spike_frame_00841.jpg",
       "frame_idx": 841,
-      "before_frame_file": null,
-      "after_frame_file": null,
+      "before_frame_file": "tinyformer7_context_frame_00826.jpg",
+      "after_frame_file": "tinyformer7_context_frame_00856.jpg",
       "spatial_bbox": [
         634.24072265625,
         256.66259765625,
@@ -1968,8 +1968,8 @@
       "member_count": 37,
       "frame_file": "tinyformer7_sprint_spike_frame_01038.jpg",
       "frame_idx": 1038,
-      "before_frame_file": null,
-      "after_frame_file": null,
+      "before_frame_file": "tinyformer7_context_frame_01023.jpg",
+      "after_frame_file": "tinyformer7_context_frame_01053.jpg",
       "spatial_bbox": [
         751.8433837890625,
         355.0979919433594,

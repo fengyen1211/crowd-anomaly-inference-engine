@@ -205,7 +205,7 @@ class OrchestratorService:
 
         兩者跟主要畫面共用同一個 spatial_bbox（同機位、同座標，只是時間點
         不同），所以套用一樣的 crop_bbox() 裁切邏輯。目前只有 panic_scatter
-        ／counter_flow 這類需要跨時間比對的事件類型會帶這兩個欄位，其餘
+        ／counter_flow／sprint_spike 這類需要跨時間比對的事件類型會帶這兩個欄位，其餘
         事件類型這裡會回傳 None，VLM 那端沿用單張畫面的原有流程。
         """
         frame_files = [f for f in (record.before_frame_file, record.after_frame_file) if f]

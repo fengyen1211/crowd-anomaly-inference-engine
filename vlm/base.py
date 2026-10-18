@@ -61,7 +61,7 @@ class BaseVLM(ABC):
                     不同模型對 prompt 的支援程度可能不同。
             context_images: 額外的脈絡畫面（例如事件發生前／後的同機位畫面），
                     用於需要跨時間比對才能判斷的行為類型（目前是
-                    panic_scatter／counter_flow，見
+                    panic_scatter／counter_flow／sprint_spike，見
                     vlm/observation_builder.py）。不支援多圖輸入的模型
                     可以忽略這個參數，只用 image 生成描述。
         """

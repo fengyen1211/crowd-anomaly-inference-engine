@@ -48,7 +48,7 @@ class VLMObservationBuilder:
             record: 影像端輸出的原始事件資料（只用 record_id，事件類型
                     刻意不放進 prompt，見檔案頂端說明）。
             context_images: 額外的脈絡畫面（依序為事件發生前／後的同機位
-                    畫面），只有 panic_scatter／counter_flow 這類需要跨時間
+                    畫面），只有 panic_scatter／counter_flow／sprint_spike 這類需要跨時間
                     比對的行為類型才會有值（見 RawEventRecord.before_frame_file
                     ／after_frame_file）；None 時沿用單張畫面的原有 prompt。
 

@@ -90,9 +90,16 @@ _CONTEXT_OFFSET_FRAMES 幀的乾淨畫面（從 BEFORE／DURING／AFTER 合併�
 往事件外側找最接近的一幀；同機位、同 `spatial_bbox` 座標，只是時間點不同），
 讓 VLM 能比較事件前中後的畫面差異。初版是整支影片共用一組（DURING 開始前／
 結束後），切段後跟第 2、3 段相隔十幾秒，比對失去意義，所以改掉（見
-vlm/observation_builder.py 的 prompt 組裝邏輯）。其餘兩類事件
-（`sprint_spike`／`crowd_locked`）沒有這個時間比對的需求，維持原本單張
-畫面的流程，這兩個欄位留 `None`。
+vlm/observation_builder.py 的 prompt 組裝邏輯）。
+
+`sprint_spike`（突然加速）也帶前後畫面，但取法不同：單張靜止畫面看不出
+速度，sweep_565928 把事件類型從 VLM prompt 拿掉後，原本被描述成「一群人
+在奔跑」的事件全部變成「動作緩慢」「在走動」——之前的「奔跑」很可能是
+標籤引導出來的。加速是瞬間的變化，而且 sprint_spike 一段可以長達數百幀
+（覆蓋率 96.6%，見上方），用段落頭尾會離峰值太遠，所以改取峰值那一幀
+前後各 _PEAK_CONTEXT_OFFSET_FRAMES 幀，讓 VLM 比較同一批人的位置變化。
+
+`crowd_locked`（停滯）維持單張畫面，這兩個欄位留 `None`。
 
 使用方式（在 project/ 目錄下執行）：
     python scripts/build_tinyformer_events.py
@@ -128,6 +135,8 @@ _OUTPUT_PATH = Path(__file__).resolve().parent.parent / "data" / "tinyformer7_ev
 
 # 需要「事件前後對照畫面」才能判斷的行為類型，見上方docstring。
 _CONTEXT_FRAME_TYPES = {"panic_scatter", "counter_flow"}
+# 以峰值幀為中心取前後畫面的類型（見上方 docstring 的 sprint_spike 說明）
+_PEAK_CONTEXT_TYPES = {"sprint_spike"}
 
 _EVENT_TYPE_RE = re.compile(r"^([a-z_]+)(?:\(([a-z]+)=([-0-9.]+)\))?$")
 _FRAME_ID_RE = re.compile(r"frame_(\d+)\.jpg$")
@@ -172,6 +181,9 @@ _GAP_SPLIT_FRAMES = 100
 # 四散、逆流都是短時間內的變化，推太遠會混進別的事件
 # （例如 panic_scatter 第 2 段 frame 657 附近同時有 sprint_spike）。
 _CONTEXT_OFFSET_FRAMES = 30
+# 峰值前後各推這麼多幀（0.5 秒）：跑步的人半秒內位移已經看得出來，
+# 再遠人可能已經跑出裁切範圍
+_PEAK_CONTEXT_OFFSET_FRAMES = 15
 
 _CAPTION_TEMPLATE = (
     "【TinyFormer+SAM2 影像端偵測，聚合自逐幀原始訊號，非人工標註】"
@@ -477,8 +489,9 @@ def main() -> None:
     print(f"來源：{_SOURCE_JSON}（共 {len(prompts)} 筆逐幀原始訊號，{len(grouped)} 種行為類型）")
     print(f"乾淨畫面：{_CLEAN_DATASET_DIR}")
     print(
-        f"事件前後脈絡畫面（僅 {sorted(_CONTEXT_FRAME_TYPES)} 使用）："
-        f"各段開始前／結束後 {_CONTEXT_OFFSET_FRAMES} 幀\n"
+        f"事件前後脈絡畫面：{sorted(_CONTEXT_FRAME_TYPES)} 取各段開始前／結束後 "
+        f"{_CONTEXT_OFFSET_FRAMES} 幀；{sorted(_PEAK_CONTEXT_TYPES)} 取峰值前後 "
+        f"{_PEAK_CONTEXT_OFFSET_FRAMES} 幀\n"
     )
 
     for base_type, items in sorted(grouped.items(), key=lambda kv: -len(kv[1])):
@@ -524,16 +537,23 @@ def main() -> None:
             # 只有一波時維持原本的裸 record_id（例如 counter_flow），
             # 讓只切出一段的類型 record_id 不受切段邏輯影響
             suffix = f"_p{segment_index}" if segment_total > 1 else ""
-            has_context = base_type in _CONTEXT_FRAME_TYPES
+            if base_type in _PEAK_CONTEXT_TYPES:
+                context_range = (
+                    peak_frame_id - _PEAK_CONTEXT_OFFSET_FRAMES,
+                    peak_frame_id + _PEAK_CONTEXT_OFFSET_FRAMES,
+                )
+            elif base_type in _CONTEXT_FRAME_TYPES:
+                context_range = (
+                    bucket[0]["frame_id"] - _CONTEXT_OFFSET_FRAMES,
+                    bucket[-1]["frame_id"] + _CONTEXT_OFFSET_FRAMES,
+                )
+            else:
+                context_range = None
             before_frame_file = after_frame_file = None
             context_note = ""
-            if has_context:
-                before_id = _find_context_frame(
-                    clean_index, bucket[0]["frame_id"] - _CONTEXT_OFFSET_FRAMES, before=True
-                )
-                after_id = _find_context_frame(
-                    clean_index, bucket[-1]["frame_id"] + _CONTEXT_OFFSET_FRAMES, before=False
-                )
+            if context_range:
+                before_id = _find_context_frame(clean_index, context_range[0], before=True)
+                after_id = _find_context_frame(clean_index, context_range[1], before=False)
                 before_frame_file = _save_context_frame(before_id, clean_index, frames_dir)
                 after_frame_file = _save_context_frame(after_id, clean_index, frames_dir)
                 context_note = f"，前後脈絡 frame {before_id}／{after_id}"
