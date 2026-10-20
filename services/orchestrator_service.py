@@ -82,6 +82,7 @@ class OrchestratorService:
         news_retriever: KnowledgeTextRetriever,
         reasoning_pipeline: ReasoningPipeline,
         alert_service: AlertComposerService,
+        vlm_view: str = "crop",
     ) -> None:
         self._ingestion_service = ingestion_service
         self._frame_service = frame_service
@@ -93,6 +94,8 @@ class OrchestratorService:
         self._news_retriever = news_retriever
         self._reasoning_pipeline = reasoning_pipeline
         self._alert_service = alert_service
+        # VLM 看裁切圖（crop）還是整張畫面加紅框（full），見 config/settings.py
+        self._vlm_view = vlm_view
 
     def process_event(
         self,
@@ -133,8 +136,10 @@ class OrchestratorService:
         context_frames = self._load_context_frames(record)
 
         # 3. VLM：中立地描述畫面內容（不判斷），組成 VLMObservation
+        box_drawn = self._vlm_view == "full"
+        vlm_image = self._frame_service.draw_bbox(full_frame, record.spatial_bbox) if box_drawn else cropped_frame
         vlm_observation = VLMObservationBuilder.build(
-            self._vlm_client, cropped_frame, record, context_images=context_frames
+            self._vlm_client, vlm_image, record, context_images=context_frames, box_drawn=box_drawn
         )
 
         # 3b. 驗證：LLM 只看描述文字，判斷是否支持規則系統的判斷（不做 RAG）
@@ -201,7 +206,7 @@ class OrchestratorService:
 
     def _load_context_frames(self, record: RawEventRecord) -> Optional[List[bytes]]:
         """
-        讀取＋裁切 before_frame_file／after_frame_file（若有）。
+        讀取＋裁切（或 vlm_view="full" 時畫上紅框）before_frame_file／after_frame_file（若有）。
 
         兩者跟主要畫面共用同一個 spatial_bbox（同機位、同座標，只是時間點
         不同），所以套用一樣的 crop_bbox() 裁切邏輯。目前只有 panic_scatter
@@ -215,5 +220,8 @@ class OrchestratorService:
         context_frames = []
         for frame_file in frame_files:
             full_frame = self._frame_service.load_context_frame(frame_file, record.record_id)
-            context_frames.append(self._frame_service.crop_bbox(full_frame, record.spatial_bbox))
+            if self._vlm_view == "full":
+                context_frames.append(self._frame_service.draw_bbox(full_frame, record.spatial_bbox))
+            else:
+                context_frames.append(self._frame_service.crop_bbox(full_frame, record.spatial_bbox))
         return context_frames

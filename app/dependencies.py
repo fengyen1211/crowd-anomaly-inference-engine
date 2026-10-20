@@ -261,4 +261,5 @@ def get_orchestrator_service() -> OrchestratorService:
         news_retriever=get_news_retriever(),
         reasoning_pipeline=get_reasoning_pipeline(),
         alert_service=get_alert_service(),
+        vlm_view=get_settings().vlm_view,
     )

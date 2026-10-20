@@ -19,7 +19,7 @@ import io
 from pathlib import Path
 from typing import List, Optional
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from config.settings import Settings, get_settings
 from utils.logger import get_logger
@@ -85,6 +85,18 @@ class FrameLoaderService:
 
         logger.info("FrameLoaderService 讀取畫面：%s", frame_path)
         return frame_path.read_bytes()
+
+    def draw_bbox(self, full_frame: bytes, bbox: List[float]) -> bytes:
+        """
+        在整張畫面上用紅框標出 bbox，給 VLM 看整體畫面時用（Settings.vlm_view
+        = "full"）：保留全場脈絡，又讓 VLM 知道系統關注的是哪裡。
+        """
+        image = Image.open(io.BytesIO(full_frame)).convert("RGB")
+        width = max(2, round(image.width / 320))
+        ImageDraw.Draw(image).rectangle([int(v) for v in bbox], outline=(255, 0, 0), width=width)
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=90)
+        return buffer.getvalue()
 
     def crop_bbox(
         self,

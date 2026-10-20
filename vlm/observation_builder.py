@@ -40,6 +40,7 @@ class VLMObservationBuilder:
         image: bytes,
         record: RawEventRecord,
         context_images: Optional[List[bytes]] = None,
+        box_drawn: bool = False,
     ) -> VLMObservation:
         """
         Args:
@@ -51,19 +52,27 @@ class VLMObservationBuilder:
                     畫面），只有 panic_scatter／counter_flow／sprint_spike 這類需要跨時間
                     比對的行為類型才會有值（見 RawEventRecord.before_frame_file
                     ／after_frame_file）；None 時沿用單張畫面的原有 prompt。
+            box_drawn: 畫面是整張畫面加紅框（Settings.vlm_view="full"）時為
+                    True，prompt 會說明紅框的意思；裁切圖時為 False。
 
         Returns:
             VLMObservation
         """
+        box_note = (
+            "畫面中的紅框標出影像分析系統關注的位置。請描述整個畫面的人群狀況，"
+            "並特別說明紅框內及附近的人在做什麼。"
+            if box_drawn
+            else ""
+        )
         if context_images:
-            prompt = (
+            prompt = box_note + (
                 f"你會依序看到 {1 + len(context_images)} 張同一位置的畫面："
                 f"第一張是事件發生當下，接下來依序是事件發生前、事件發生後的畫面。"
                 f"請客觀比較這幾張畫面中人群隨時間的變化，包括人群的分布與疏密、"
                 f"人的動作、移動的方向與速度，只描述你實際看到的內容。"
             )
         else:
-            prompt = (
+            prompt = box_note + (
                 "請客觀描述這張畫面中群體的行為與動態，包括人群的分布與疏密、"
                 "人的動作、移動的方向與速度，只描述你實際看到的內容。"
             )

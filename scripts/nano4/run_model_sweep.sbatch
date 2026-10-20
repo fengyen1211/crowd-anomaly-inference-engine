@@ -22,6 +22,10 @@
 # 最可靠，8b 跟 14b 給出的警報等級完全相同、又比較快。設成空字串
 #（VERIFIER_MODEL= sbatch ...）就改回跟各組的 LLM 共用。
 #
+# VLM 看裁切圖或整張畫面加紅框，由 VLM_VIEW 決定（crop／full，預設 crop，
+# 見 config/settings.py 的 vlm_view），例如：
+#     VLM_VIEW=full sbatch -A <計畫代號> --mail-user=<email> scripts/nano4/run_model_sweep.sbatch
+#
 # 使用方式（在登入節點，project/ 目錄下執行）：
 #     sbatch -A <計畫代號> --mail-user=<email> scripts/nano4/run_model_sweep.sbatch
 #     sbatch -A <計畫代號> --mail-user=<email> scripts/nano4/run_model_sweep.sbatch \
@@ -50,6 +54,8 @@ set -eo pipefail   # 不用 -u：conda activate 會讀到未定義的變數而�
 INPUT=${1:-data/tinyformer7_events.json}
 # 用 - 而不是 :-，讓「明確設成空字串」可以關掉獨立驗證模型
 export VERIFIER_MODEL=${VERIFIER_MODEL-qwen3:8b}
+export VLM_VIEW=${VLM_VIEW:-crop}
+echo "VLM_VIEW=$VLM_VIEW  VERIFIER_MODEL=${VERIFIER_MODEL:-（跟各組 LLM 共用）}"
 
 # 組名 VLM LLM
 ARMS=(

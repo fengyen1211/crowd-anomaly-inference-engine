@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pydantic import ValidationError  # noqa: E402
 
 from app.dependencies import get_orchestrator_service  # noqa: E402
+from config.settings import get_settings  # noqa: E402
 from config.yaml_config import load_config  # noqa: E402
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -105,6 +106,7 @@ def main() -> None:
             "vlm": app_config.vlm.model,
             "llm": app_config.llm.model,
             "verifier": (app_config.verifier or app_config.llm).model,
+            "vlm_view": get_settings().vlm_view,
         },
         "total_records": len(records),
         "total_elapsed_sec": round(total_elapsed, 1),
