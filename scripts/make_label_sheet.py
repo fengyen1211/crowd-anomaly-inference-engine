@@ -9,6 +9,10 @@ scripts/make_label_sheet.py
 第一版只有 5 張畫面。標註者回饋：只看靜止畫面，人也很難判斷速度與方向，
 所以加上影片片段；結果另存 labels_video7_clips.json，不覆蓋第一版。
 
+「有沒有發生」分成兩題：框內（occurred_box，檢驗影像端在那個位置的偵測對
+不對）與整體畫面（occurred_scene，檢驗這段時間現場該不該發警報）。第一版只問
+框內；sprint_p4 這種框到影子、但旁邊可能真的有人在跑的情況，兩題答案會不同。
+
 幀編號：資料集的 frame_id 以 30fps 計（frame_id / 30 = 秒），原始影片是
 24fps，影片幀 = frame_id × 0.8（frame 657 對應影片第 525 幀，已用畫面比對確認）。
 
@@ -216,7 +220,7 @@ _TEMPLATE = """<!doctype html>
 </header>
 <p class="intro">每筆事件先看<b>峰值前後各 5 秒的影片</b>（右下角是相對峰值的時間，峰值前後 0.5 秒紅框會加粗），可以切換慢速播放；
 下方再附峰值前後 1 秒內 5 個時間點的畫面供對照。紅框是系統在峰值那一刻標出異常的位置（框是固定的，人會移動）。
-<b>判斷對象是峰值時紅框內的人</b>；框外的人只當作周圍情況參考（例如是不是大家都在跑、是不是在表演）。點圖片可以放大。
+第 1a 題只看<b>峰值時紅框內的人</b>（系統偵測的位置對不對）；第 1b 題看<b>整個畫面</b>（這段時間現場有沒有出現這個行為）。點圖片可以放大。
 這一版的答案跟上一版（只有照片）分開存，請依影片重新判斷。只依你在畫面上看到的回答；看不出來就選「看不出來」。填寫內容會暫存在這個瀏覽器，全部填完後按右上角下載。</p>
 <div id="events"></div>
 </main>
@@ -226,10 +230,18 @@ const EVENTS = __EVENTS__;
 const KEY = "label_sheet_video7_clips";
 let labels = {};
 try { labels = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { labels = {}; }
+// 拆題前只有一題 occurred（當時問的是框內），沿用為 occurred_box
+Object.values(labels).forEach(l => {
+  if (l.occurred && !l.occurred_box) l.occurred_box = l.occurred;
+  delete l.occurred;
+});
 
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(labels)); } catch (e) {}
-  const done = EVENTS.filter(e => labels[e.record_id] && labels[e.record_id].occurred && labels[e.record_id].danger).length;
+  const done = EVENTS.filter(e => {
+    const l = labels[e.record_id];
+    return l && l.occurred_box && l.occurred_scene && l.danger;
+  }).length;
   document.getElementById("progress").textContent = `已完成 ${done} / ${EVENTS.length}`;
 }
 
@@ -255,9 +267,11 @@ EVENTS.forEach((ev, i) => {
     <div class="row-label">整張畫面</div><div class="strip">${figs("full")}</div>
     <div class="row-label">放大局部</div><div class="strip">${figs("crop")}</div>
     <div class="q">
-      <div>1. 系統說的行為（${ev.hint}）真的有發生嗎？<br>
-        ${radios(ev.record_id, "occurred", [["yes","有"],["no","沒有"],["unsure","看不出來"]])}</div>
-      <div>2. 實際上需要通報的程度？<br>
+      <div>1a. 峰值時，<b>紅框內的人</b>有出現這個行為（${ev.hint}）嗎？<br>
+        ${radios(ev.record_id, "occurred_box", [["yes","有"],["no","沒有"],["unsure","看不出來"]])}</div>
+      <div>1b. 這段時間，<b>整個畫面</b>中有出現這個行為嗎？<br>
+        ${radios(ev.record_id, "occurred_scene", [["yes","有"],["no","沒有"],["unsure","看不出來"]])}</div>
+      <div>2. 就整個畫面來看，實際上需要通報的程度？<br>
         ${radios(ev.record_id, "danger", [["none","正常，不需通報"],["attention","需要注意"],["danger","危險，要立即處理"]])}</div>
       <div>3. 你看到的實際情況（一句話，例如「舞者在排練」「有人跌倒」）：
         <textarea rows="2" data-rid="${ev.record_id}" data-field="note">${note.replace(/</g,"&lt;")}</textarea></div>

@@ -5,7 +5,9 @@ scripts/evaluate_against_labels.py
 結果，算驗證判斷與警報等級的準確率。
 
 對照方式：
-- 驗證判斷：標註「有發生」應判 support；「沒有發生」判 contradict 或
+- 驗證判斷：依 --target 選標註的哪一題——box（峰值時框內的人，檢驗影像端
+  定位）或 scene（整個畫面，檢驗該不該發警報，預設）。第一版標註只有一題
+  occurred（問的是框內），兩種 target 都退回用它。標註「有發生」應判 support；「沒有發生」判 contradict 或
   uncertain 都算對（兩者都不會發出警報）；「看不出來」不計入。
 - 警報等級：標註的通報程度 none／attention／danger 對應 info／warning／
   critical；低於標註算漏報、高於標註算誤報。
@@ -33,6 +35,7 @@ def main() -> None:
     parser.add_argument("labels", help="人工標註 JSON")
     parser.add_argument("sweep_dir", help="reports/sweep_<jobid>")
     parser.add_argument("log", nargs="?", help="logs/model-sweep_<jobid>.out（沒有就只評估警報等級）")
+    parser.add_argument("--target", choices=["box", "scene"], default="scene", help="驗證判斷對照框內或整體畫面")
     args = parser.parse_args()
 
     labels = {x["record_id"]: x for x in json.loads(Path(args.labels).read_text(encoding="utf-8"))["labels"]}
@@ -60,7 +63,7 @@ def main() -> None:
                 continue
             short = rid.replace("tinyformer7_", "")
 
-            occurred = label.get("occurred")
+            occurred = label.get(f"occurred_{args.target}", label.get("occurred"))
             if verdict and occurred in ("yes", "no"):
                 v_n += 1
                 correct = (verdict == "support") == (occurred == "yes")
