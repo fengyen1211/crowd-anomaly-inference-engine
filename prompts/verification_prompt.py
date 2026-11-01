@@ -26,6 +26,8 @@ _EVENT_TYPE_HINTS = {
     "panic_dispersal": "人群加速、向四周散開",
     "reverse_flow": "有人朝著與大部分人相反的方向移動",
     "abnormal_gathering": "一群人越靠越近、停下來聚集",
+    # UCF-Crime 非群聚資料（YOLO+ByteTrack＋CLIP 打架偵測）
+    "fight": "有人在打架、扭打、推擠或攻擊別人",
 }
 
 _INSTRUCTION = """影像分析系統判斷某個畫面中出現了「{event_type}」{hint_clause}。

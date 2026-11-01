@@ -101,18 +101,34 @@ vlm/observation_builder.py 的 prompt 組裝邏輯）。
 
 `crowd_locked`（停滯）維持單張畫面，這兩個欄位留 `None`。
 
+非群聚資料（UCF-Crime）
+--------------------------------------------
+影像端另外給了 20 支 UCF-Crime 監視器影片（非群聚資料_給推論端/），偵測器是
+YOLO + ByteTrack（個人規則＋CLIP 打架偵測），但 JSON 格式和資料夾結構跟
+7_clean 完全相同，所以沿用同一套切段邏輯，只換來源路徑、record_id 前綴與
+caption 裡的影片說明。新增的 `fight` 沒有強度數值，跟 panic_scatter 一樣走
+時間間隔切段。8 支正常片沒有任何事件，不會產生 record。
+
+這條路徑完全以影像端的偵測結果為準，沒有用到標準答案時段。
+
 使用方式（在 project/ 目錄下執行）：
     python scripts/build_tinyformer_events.py
+    python scripts/build_tinyformer_events.py --ucf-root ../非群聚資料_給推論端
+    python scripts/build_tinyformer_events.py --ucf-root ../非群聚資料_給推論端 --videos Arrest001 Assault008
 
-輸出：data/tinyformer7_events.json（{"records": [...]} 格式，
-可直接被 scripts/run_pipeline.py --input ... --index 0~3 使用）
+輸出：預設 data/tinyformer7_events.json，--ucf-root 時預設
+data/ucf_noncluster_events.json（{"records": [...]} 格式，
+可直接被 scripts/run_pipeline.py --input ... --index N 或
+scripts/nano4/run_model_sweep.sbatch <輸入檔> 使用）
 """
 
+import argparse
 import io
 import json
 import re
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -125,13 +141,48 @@ from config.settings import get_settings  # noqa: E402
 from services.frame_service import FrameLoaderService  # noqa: E402
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_SOURCE_DIR = _PROJECT_ROOT / "0901"
-_SOURCE_JSON = _SOURCE_DIR / "tinyformer_events_7.json"
-_CLEAN_DATASET_DIR = _PROJECT_ROOT / "7_clean" / "tinyformer_clean_dataset_7"
-_CLEAN_FRAMES_DIR = _CLEAN_DATASET_DIR / "DURING"
-_BEFORE_FRAMES_DIR = _CLEAN_DATASET_DIR / "BEFORE"
-_AFTER_FRAMES_DIR = _CLEAN_DATASET_DIR / "AFTER"
-_OUTPUT_PATH = Path(__file__).resolve().parent.parent / "data" / "tinyformer7_events.json"
+_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+_OUTPUT_PATH = _DATA_DIR / "tinyformer7_events.json"
+_UCF_OUTPUT_PATH = _DATA_DIR / "ucf_noncluster_events.json"
+
+
+@dataclass
+class VideoSource:
+    """一支影片的來源路徑與輸出命名。"""
+
+    source_json: Path        # 逐幀原始訊號（vlm_visual_prompts）
+    clean_dataset_dir: Path  # 底下有 BEFORE／DURING／AFTER 乾淨畫面
+    prefix: str              # record_id 與畫面檔名前綴
+    group_id: str
+    video_label: str         # caption 裡的影片說明
+    detector: str            # caption 裡的偵測器名稱
+    label_source: str
+
+
+# video 7（群聚，TinyFormer+SAM2）：原本的預設來源，輸出跟改寫前完全相同
+_VIDEO7 = VideoSource(
+    source_json=_PROJECT_ROOT / "0901" / "tinyformer_events_7.json",
+    clean_dataset_dir=_PROJECT_ROOT / "7_clean" / "tinyformer_clean_dataset_7",
+    prefix="tinyformer7",
+    group_id="tinyformer7_video7_during",
+    video_label="video 7",
+    detector="TinyFormer+SAM2",
+    label_source="tinyformer_sam2_zscore_unvalidated",
+)
+
+
+def _ucf_source(video_dir: Path) -> VideoSource:
+    """非群聚資料_給推論端/<影片>_clean/ -> VideoSource。"""
+    name = video_dir.name.removesuffix("_clean")
+    return VideoSource(
+        source_json=video_dir / f"tinyformer_clean_events_{name}.json",
+        clean_dataset_dir=video_dir / f"tinyformer_clean_dataset_{name}",
+        prefix=f"ucf_{name}",
+        group_id=f"ucf_{name}_during",
+        video_label=f"UCF-Crime {name}（監視器畫面）",
+        detector="YOLO+ByteTrack（個人異常規則＋CLIP 打架偵測）",
+        label_source="yolo_bytetrack_individual_unvalidated",
+    )
 
 # 需要「事件前後對照畫面」才能判斷的行為類型，見上方docstring。
 _CONTEXT_FRAME_TYPES = {"panic_scatter", "counter_flow"}
@@ -186,8 +237,9 @@ _CONTEXT_OFFSET_FRAMES = 30
 _PEAK_CONTEXT_OFFSET_FRAMES = 15
 
 _CAPTION_TEMPLATE = (
-    "【TinyFormer+SAM2 影像端偵測，聚合自逐幀原始訊號，非人工標註】"
-    "來源影片：video 7，DURING 異常階段（frame 378-1086，約 12.6s-36.2s）。"
+    "【{detector} 影像端偵測，聚合自逐幀原始訊號，非人工標註】"
+    "來源影片：{video_label}，DURING 異常階段（frame {during_min}-{during_max}，"
+    "約 {during_ts_min:.1f}s-{during_ts_max:.1f}s）。"
     "{intro}"
     "系統標記了 {instance_count} 次逐幀觀測，涉及 {member_count} 個"
     "不重複的追蹤人物 ID（時間跨度 frame {frame_min}-{frame_max}，"
@@ -196,7 +248,7 @@ _CAPTION_TEMPLATE = (
     "本筆畫面（frame_idx={peak_frame}）取的是{peak_desc}，"
     "不代表{scope}整段時間畫面都長這樣，也不代表所有 {member_count} 個相關"
     "人物都同時出現在這張畫面裡——請 VLM 只描述這張畫面實際看到的內容。"
-    "TinyFormer+SAM2 目前只輸出 bbox 與強度數值（z-score／密度），沒有輸出"
+    "{detector} 目前只輸出 bbox 與強度數值（z-score／密度），沒有輸出"
     "群體移動方向角度，因此 collective_motion 欄位誠實留空，不是遺漏。"
 )
 
@@ -233,8 +285,8 @@ def _parse_event_type(event_type: str) -> Tuple[str, Optional[str], Optional[flo
     return base, metric, (float(value) if value is not None else None)
 
 
-def _load_source() -> List[Dict[str, Any]]:
-    raw = json.loads(_SOURCE_JSON.read_text(encoding="utf-8"))
+def _load_source(source_json: Path) -> List[Dict[str, Any]]:
+    raw = json.loads(source_json.read_text(encoding="utf-8"))
     prompts = raw["vlm_visual_prompts"]
     for p in prompts:
         base, metric, value = _parse_event_type(p["event_type"])
@@ -359,12 +411,15 @@ def _pick_densest_frame(bucket: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _build_caption(
+    src: VideoSource,
+    during: Tuple[int, int, float, float],
     base_type: str,
     items: List[Dict[str, Any]],
     peak: Dict[str, Any],
     segment_index: int = 1,
     segment_total: int = 1,
 ) -> str:
+    """during：整支影片所有原始訊號的 (最早幀, 最晚幀, 最早秒, 最晚秒)。"""
     members: set = set()
     for p in items:
         members.update(p["member_ids"])
@@ -390,6 +445,12 @@ def _build_caption(
     )
 
     return _CAPTION_TEMPLATE.format(
+        detector=src.detector,
+        video_label=src.video_label,
+        during_min=during[0],
+        during_max=during[1],
+        during_ts_min=during[2],
+        during_ts_max=during[3],
         intro=intro,
         peak_desc=_PEAK_DESC_METRIC if values else _PEAK_DESC_NO_METRIC,
         scope=_SCOPE_MULTI if is_multi else _SCOPE_SINGLE,
@@ -404,27 +465,28 @@ def _build_caption(
     )
 
 
-def _load_clean_frame(peak_frame_id: int) -> bytes:
+def _load_clean_frame(clean_dataset_dir: Path, peak_frame_id: int) -> bytes:
     """從乾淨（無疊加標註）的 DURING 畫面資料夾讀取跟標註版一一對應的 frame_id。"""
-    source_path = _CLEAN_FRAMES_DIR / f"frame_{peak_frame_id:05d}.jpg"
+    source_path = clean_dataset_dir / "DURING" / f"frame_{peak_frame_id:05d}.jpg"
     if not source_path.exists():
         raise SystemExit(f"找不到乾淨代表幀畫面：{source_path}")
     return source_path.read_bytes()
 
 
-def _index_clean_frames() -> Dict[int, Path]:
+def _index_clean_frames(clean_dataset_dir: Path) -> Dict[int, Path]:
     """
     建立 BEFORE／DURING／AFTER 三個資料夾所有乾淨畫面的 frame_id -> 路徑索引。
     三者是同一支影片的連續 frame_id，合在一起才能對任意時間點找最接近的畫面
     （DURING 有 689/709 幀；BEFORE／AFTER 較稀疏，約每 15 幀一張）。
     """
     index: Dict[int, Path] = {}
-    for directory in (_BEFORE_FRAMES_DIR, _CLEAN_FRAMES_DIR, _AFTER_FRAMES_DIR):
-        for path in directory.glob("frame_*.jpg"):
+    # 資料夾可能不存在（例如 UCF 的 Assault008 沒有 AFTER），glob 會回傳空的
+    for state in ("BEFORE", "DURING", "AFTER"):
+        for path in (clean_dataset_dir / state).glob("frame_*.jpg"):
             if match := _FRAME_ID_RE.search(path.name):
                 index[int(match.group(1))] = path
     if not index:
-        raise SystemExit(f"找不到任何乾淨畫面檔案：{_CLEAN_DATASET_DIR}")
+        raise SystemExit(f"找不到任何乾淨畫面檔案：{clean_dataset_dir}")
     return index
 
 
@@ -441,22 +503,25 @@ def _find_context_frame(index: Dict[int, Path], target: int, before: bool) -> in
     return min(candidates) if candidates else max(index)
 
 
-def _save_context_frame(frame_id: int, index: Dict[int, Path], frames_dir: Path) -> str:
+def _save_context_frame(prefix: str, frame_id: int, index: Dict[int, Path], frames_dir: Path) -> str:
     """存事件前／後脈絡畫面；檔名依 frame_id，不同段落用到同一幀時共用一個檔案。"""
     frames_dir.mkdir(parents=True, exist_ok=True)
-    dest_filename = f"tinyformer7_context_frame_{frame_id:05d}.jpg"
+    dest_filename = f"{prefix}_context_frame_{frame_id:05d}.jpg"
     (frames_dir / dest_filename).write_bytes(index[frame_id].read_bytes())
     return dest_filename
 
 
-def _save_peak_frame(base_type: str, peak_frame_id: int, frame_bytes: bytes, frames_dir: Path) -> str:
+def _save_peak_frame(
+    prefix: str, base_type: str, peak_frame_id: int, frame_bytes: bytes, frames_dir: Path
+) -> str:
     frames_dir.mkdir(parents=True, exist_ok=True)
-    dest_filename = f"tinyformer7_{base_type}_frame_{peak_frame_id:05d}.jpg"
+    dest_filename = f"{prefix}_{base_type}_frame_{peak_frame_id:05d}.jpg"
     (frames_dir / dest_filename).write_bytes(frame_bytes)
     return dest_filename
 
 
 def _save_cropped_preview(
+    prefix: str,
     base_type: str,
     peak_frame_id: int,
     frame_bytes: bytes,
@@ -467,32 +532,35 @@ def _save_cropped_preview(
     """存一份跟 pipeline 執行時同樣邏輯（含 padding）裁切出來的預覽圖，供人工檢查
     「VLM 實際看到的畫面」是否可辨識——不會被 pipeline 讀取。"""
     cropped = frame_loader.crop_bbox(frame_bytes, bbox)
-    preview_filename = f"tinyformer7_{base_type}_frame_{peak_frame_id:05d}_cropped_preview.jpg"
+    preview_filename = f"{prefix}_{base_type}_frame_{peak_frame_id:05d}_cropped_preview.jpg"
     (frames_dir / preview_filename).write_bytes(cropped)
     return preview_filename, Image.open(io.BytesIO(cropped)).size
 
 
-def main() -> None:
-    prompts = _load_source()
+def _build_video(
+    src: VideoSource,
+    frames_dir: Path,
+    clip: Any,
+    frame_loader: FrameLoaderService,
+) -> List[Dict[str, Any]]:
+    """把一支影片的逐幀原始訊號切成事件 record。沒有任何訊號時回傳空 list。"""
+    prompts = _load_source(src.source_json)
+    if not prompts:
+        print(f"來源：{src.source_json}（沒有任何訊號，不產生事件）\n")
+        return []
     grouped = _group_by_category(prompts)
 
-    frames_dir = Path(get_settings().frames_dir)
-    clip = get_visual_embedding_client()
-    frame_loader = FrameLoaderService(frames_dir=str(frames_dir))
+    if not (src.clean_dataset_dir / "DURING").exists():
+        raise SystemExit(f"找不到乾淨畫面資料夾：{src.clean_dataset_dir / 'DURING'}")
 
-    if not _CLEAN_FRAMES_DIR.exists():
-        raise SystemExit(f"找不到乾淨畫面資料夾：{_CLEAN_FRAMES_DIR}")
-
-    clean_index = _index_clean_frames()
+    clean_index = _index_clean_frames(src.clean_dataset_dir)
+    all_frames = [p["frame_id"] for p in prompts]
+    all_ts = [p["timestamp_sec"] for p in prompts]
+    during = (min(all_frames), max(all_frames), min(all_ts), max(all_ts))
 
     records = []
-    print(f"來源：{_SOURCE_JSON}（共 {len(prompts)} 筆逐幀原始訊號，{len(grouped)} 種行為類型）")
-    print(f"乾淨畫面：{_CLEAN_DATASET_DIR}")
-    print(
-        f"事件前後脈絡畫面：{sorted(_CONTEXT_FRAME_TYPES)} 取各段開始前／結束後 "
-        f"{_CONTEXT_OFFSET_FRAMES} 幀；{sorted(_PEAK_CONTEXT_TYPES)} 取峰值前後 "
-        f"{_PEAK_CONTEXT_OFFSET_FRAMES} 幀\n"
-    )
+    print(f"來源：{src.source_json}（共 {len(prompts)} 筆逐幀原始訊號，{len(grouped)} 種行為類型）")
+    print(f"乾淨畫面：{src.clean_dataset_dir}")
 
     for base_type, items in sorted(grouped.items(), key=lambda kv: -len(kv[1])):
         has_metric = any(p["_value"] is not None for p in items)
@@ -519,8 +587,8 @@ def main() -> None:
         for segment_index, (peak, bucket) in enumerate(zip(peaks, buckets), start=1):
             peak_frame_id = peak["frame_id"]
 
-            frame_bytes = _load_clean_frame(peak_frame_id)
-            dest_filename = _save_peak_frame(base_type, peak_frame_id, frame_bytes, frames_dir)
+            frame_bytes = _load_clean_frame(src.clean_dataset_dir, peak_frame_id)
+            dest_filename = _save_peak_frame(src.prefix, base_type, peak_frame_id, frame_bytes, frames_dir)
             width, height = Image.open(io.BytesIO(frame_bytes)).size
             embedding = clip.embed_image([frame_bytes])[0]
 
@@ -531,7 +599,7 @@ def main() -> None:
             ]
 
             preview_filename, preview_size = _save_cropped_preview(
-                base_type, peak_frame_id, frame_bytes, bbox, frames_dir, frame_loader
+                src.prefix, base_type, peak_frame_id, frame_bytes, bbox, frames_dir, frame_loader
             )
 
             # 只有一波時維持原本的裸 record_id（例如 counter_flow），
@@ -554,13 +622,13 @@ def main() -> None:
             if context_range:
                 before_id = _find_context_frame(clean_index, context_range[0], before=True)
                 after_id = _find_context_frame(clean_index, context_range[1], before=False)
-                before_frame_file = _save_context_frame(before_id, clean_index, frames_dir)
-                after_frame_file = _save_context_frame(after_id, clean_index, frames_dir)
+                before_frame_file = _save_context_frame(src.prefix, before_id, clean_index, frames_dir)
+                after_frame_file = _save_context_frame(src.prefix, after_id, clean_index, frames_dir)
                 context_note = f"，前後脈絡 frame {before_id}／{after_id}"
 
             records.append({
-                "record_id": f"tinyformer7_{base_type}{suffix}",
-                "group_id": "tinyformer7_video7_during",
+                "record_id": f"{src.prefix}_{base_type}{suffix}",
+                "group_id": src.group_id,
                 "member_ids": members,
                 "member_count": len(members),
                 "frame_file": dest_filename,
@@ -569,10 +637,10 @@ def main() -> None:
                 "after_frame_file": after_frame_file,
                 "spatial_bbox": bbox,
                 "predicted_event_type": base_type,
-                "label_source": "tinyformer_sam2_zscore_unvalidated",
+                "label_source": src.label_source,
                 "confidence": 0.0,
                 "collective_motion": None,
-                "caption": _build_caption(base_type, bucket, peak, segment_index, segment_total),
+                "caption": _build_caption(src, during, base_type, bucket, peak, segment_index, segment_total),
                 "embedding": embedding,
                 "embedding_model": "openai/clip-vit-base-patch32",
                 "embedding_is_simulated": False,
@@ -586,13 +654,67 @@ def main() -> None:
                 f"代表幀 frame_{peak_frame_id:05d} -> {dest_filename}"
                 f"（裁切預覽 {preview_size[0]}x{preview_size[1]}）{context_note}"
             )
+    print()
+    return records
 
-    _OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _OUTPUT_PATH.write_text(json.dumps({"records": records}, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    relative_output = _OUTPUT_PATH.relative_to(Path(__file__).resolve().parent.parent)
-    print(f"\n已寫入 {len(records)} 筆事件：{_OUTPUT_PATH}")
-    print(f"\n接著可用：\n  python scripts/run_pipeline.py --input {relative_output} --index 0")
+def _ucf_sources(root: Path, videos: Optional[List[str]]) -> List[VideoSource]:
+    dirs = sorted(d for d in root.iterdir() if d.is_dir() and d.name.endswith("_clean"))
+    if videos:
+        wanted = set(videos)
+        dirs = [d for d in dirs if d.name.removesuffix("_clean") in wanted]
+        missing = wanted - {d.name.removesuffix("_clean") for d in dirs}
+        if missing:
+            raise SystemExit(f"找不到影片：{sorted(missing)}（在 {root}）")
+    if not dirs:
+        raise SystemExit(f"{root} 底下沒有 *_clean 資料夾")
+    return [_ucf_source(d) for d in dirs]
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="把影像端逐幀訊號切成推論端事件 JSON")
+    parser.add_argument("--ucf-root", type=Path, help="非群聚資料_給推論端 資料夾；不給就處理 video 7")
+    parser.add_argument("--videos", nargs="+", help="只處理這幾支（例如 Arrest001 Assault008），搭配 --ucf-root")
+    parser.add_argument("--output", type=Path, help="輸出路徑")
+    args = parser.parse_args()
+
+    if args.ucf_root:
+        sources = _ucf_sources(args.ucf_root, args.videos)
+        output = args.output or _UCF_OUTPUT_PATH
+    else:
+        if args.videos:
+            parser.error("--videos 要搭配 --ucf-root")
+        sources = [_VIDEO7]
+        output = args.output or _OUTPUT_PATH
+
+    frames_dir = Path(get_settings().frames_dir)
+    clip = get_visual_embedding_client()
+    frame_loader = FrameLoaderService(frames_dir=str(frames_dir))
+
+    print(
+        f"事件前後脈絡畫面：{sorted(_CONTEXT_FRAME_TYPES)} 取各段開始前／結束後 "
+        f"{_CONTEXT_OFFSET_FRAMES} 幀；{sorted(_PEAK_CONTEXT_TYPES)} 取峰值前後 "
+        f"{_PEAK_CONTEXT_OFFSET_FRAMES} 幀\n"
+    )
+
+    records: List[Dict[str, Any]] = []
+    per_video = []
+    for src in sources:
+        built = _build_video(src, frames_dir, clip, frame_loader)
+        records.extend(built)
+        per_video.append((src.prefix, len(built)))
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps({"records": records}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if len(sources) > 1:
+        print("各影片事件數：" + "、".join(f"{p} {n}" for p, n in per_video))
+    print(f"\n已寫入 {len(records)} 筆事件：{output}")
+    try:
+        shown = output.resolve().relative_to(Path(__file__).resolve().parent.parent)
+    except ValueError:
+        shown = output
+    print(f"\n接著可用：\n  python scripts/run_pipeline.py --input {shown} --index 0")
 
 
 if __name__ == "__main__":

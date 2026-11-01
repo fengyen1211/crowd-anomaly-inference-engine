@@ -65,6 +65,24 @@ ARMS=(
     "both_mid qwen2.5vl:7b  gemma3:27b"
 )
 
+# 只跑部分組別：SWEEP_ARMS="baseline vlm_7b" sbatch ...（預設全跑）。
+# 事件多的時候（例如 UCF 非群聚資料 99 筆）四組全跑會接近 3 小時上限。
+if [ -n "${SWEEP_ARMS:-}" ]; then
+    SELECTED=()
+    for arm in "${ARMS[@]}"; do
+        read -r name _ <<< "$arm"
+        if [[ " $SWEEP_ARMS " == *" $name "* ]]; then
+            SELECTED+=("$arm")
+        fi
+    done
+    if [ ${#SELECTED[@]} -eq 0 ]; then
+        echo "SWEEP_ARMS=$SWEEP_ARMS 沒有對到任何組別" >&2
+        exit 1
+    fi
+    ARMS=("${SELECTED[@]}")
+fi
+echo "組別：$(printf '%s\n' "${ARMS[@]}" | awk '{print $1}' | tr '\n' ' ')"
+
 WORK=/work/$USER
 OUT_DIR=reports/sweep_${SLURM_JOB_ID}
 mkdir -p "$OUT_DIR"
