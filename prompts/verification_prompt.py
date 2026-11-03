@@ -12,6 +12,9 @@ verification_verdict／visual_confidence（呼叫邏輯在 llm/visual_verifier.p
 - 不給事件的系統 caption（裡面的強度數字與「異常」字眼會引導它附和）
 - 只看描述寫出的內容、不自行推測；但用詞不必與行為說明完全相同
   （第一版禁止得太強硬，10 筆全部判成 uncertain，連「人群開始四散」也是）
+- UCF fight 抽樣（verifiers_685625）裡 10 筆有 4 筆 support 的理由是
+  「快速移動／相向而行／遮臉，可能與打架有關」，所以再補一條：理由要靠
+  「可能、暗示」才連得上就判 uncertain；fight 的行為說明也寫明什麼不算
 """
 
 from typing import Dict, List
@@ -27,7 +30,10 @@ _EVENT_TYPE_HINTS = {
     "reverse_flow": "有人朝著與大部分人相反的方向移動",
     "abnormal_gathering": "一群人越靠越近、停下來聚集",
     # UCF-Crime 非群聚資料（YOLO+ByteTrack＋CLIP 打架偵測）
-    "fight": "有人在打架、扭打、推擠或攻擊別人",
+    # 寫明「什麼不算」：UCF fight 抽樣裡 gemma3:27b 把「快速移動」「相向而行」
+    # 「用手遮臉」都推論成可能在打架而判 support
+    "fight": "人與人之間有肢體衝突，例如出手打人、推人、拉扯、扭打、把人壓倒在地；"
+             "只是快速移動、相向而行、靠近、交談或圍觀都不算",
 }
 
 _INSTRUCTION = """影像分析系統判斷某個畫面中出現了「{event_type}」{hint_clause}。
@@ -36,11 +42,13 @@ _INSTRUCTION = """影像分析系統判斷某個畫面中出現了「{event_type
 「{description}」
 
 請只根據這段描述中寫出的內容，判斷描述是否支持系統的判斷：
-- support：描述中出現這個行為的核心動作。用詞不必完全相同（例如描述寫「有人在奔跑」就支持「有人在奔跑或明顯加速移動」）
-- contradict：描述的情況明顯是別的事（例如只是正常走動、排練、表演、觀看），與這個行為不符
+- support：描述中直接寫出這個行為的核心動作。用詞不必完全相同（例如描述寫「有人在奔跑」就支持「有人在奔跑或明顯加速移動」）
+- contradict：描述的情況明顯是別的事（例如只是正常走動、排練、表演、比賽、觀看，或畫面是插圖、動畫而不是真實場景），與這個行為不符
 - uncertain：描述完全沒有提到相關的動作，或只有「有人在移動」這類泛泛的說法
 
-不要自行推測描述沒寫到的事。
+不要自行推測描述沒寫到的事：
+- support 的依據必須是描述裡直接寫出的那個動作，不能從別的動作推論（例如「快速移動」不能推論成「推擠」，「相向而行」不能推論成「衝突」）
+- 如果你的理由需要用到「可能」「暗示」「或許」才能連到這個行為，就判 uncertain
 
 以 JSON 回答：
 - verification_verdict：support／contradict／uncertain

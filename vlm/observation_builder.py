@@ -29,6 +29,21 @@ from utils.schemas import RawEventRecord
 from vlm.base import BaseVLM
 from vlm.schemas import VerificationVerdict, VLMObservation
 
+# zoom 的說明只要求描述動作、姿勢與人和人之間的互動，不提任何事件類型：
+# UCF fight 抽樣裡 VLM 看整張畫面時只描述場景（「等候區」「停車場」），
+# 地上扭打的人也說成「在聊天」，所以明確請它看每個人的動作。
+_VIEW_NOTES = {
+    "full": (
+        "畫面中的紅框標出影像分析系統關注的位置。請描述整個畫面的人群狀況，"
+        "並特別說明紅框內及附近的人在做什麼。"
+    ),
+    "zoom": (
+        "這是監視器畫面中某個區域的放大圖，畫質可能比較模糊。"
+        "請逐一描述圖中每個人的動作與姿勢（站、走、跑、蹲、倒地、伸手等），"
+        "以及人與人之間的互動，包括有沒有身體接觸。"
+    ),
+}
+
 
 class VLMObservationBuilder:
     """把 BaseVLM.describe_image() 的原始輸出組成 VLMObservation。"""
@@ -40,7 +55,7 @@ class VLMObservationBuilder:
         image: bytes,
         record: RawEventRecord,
         context_images: Optional[List[bytes]] = None,
-        box_drawn: bool = False,
+        view: str = "crop",
     ) -> VLMObservation:
         """
         Args:
@@ -52,18 +67,14 @@ class VLMObservationBuilder:
                     畫面），只有 panic_scatter／counter_flow／sprint_spike 這類需要跨時間
                     比對的行為類型才會有值（見 RawEventRecord.before_frame_file
                     ／after_frame_file）；None 時沿用單張畫面的原有 prompt。
-            box_drawn: 畫面是整張畫面加紅框（Settings.vlm_view="full"）時為
-                    True，prompt 會說明紅框的意思；裁切圖時為 False。
+            view: 畫面的種類（Settings.vlm_view）。full 是整張畫面加紅框，
+                    prompt 會說明紅框的意思；zoom 是放大的局部，prompt 會請
+                    它描述每個人的動作姿勢與彼此的互動；crop 不加說明。
 
         Returns:
             VLMObservation
         """
-        box_note = (
-            "畫面中的紅框標出影像分析系統關注的位置。請描述整個畫面的人群狀況，"
-            "並特別說明紅框內及附近的人在做什麼。"
-            if box_drawn
-            else ""
-        )
+        box_note = _VIEW_NOTES.get(view, "")
         if context_images:
             prompt = box_note + (
                 f"你會依序看到 {1 + len(context_images)} 張同一位置的畫面："

@@ -90,8 +90,11 @@ class Settings(BaseSettings):
     # - full：整張畫面、用紅框標出 spatial_bbox
     # 加 full 的原因：sprint_spike 的框常常只框一個人，裁切後周圍真正在跑的人
     # 多半被切掉；panic_scatter 這種「一群人往四周散開」本來就要看整體。
+    # - zoom：緊貼 spatial_bbox 裁切後放大（FrameLoaderService.zoom_bbox）
+    # 加 zoom 的原因：UCF 畫面只有 320x240，crop 外擴後幾乎等於整張畫面，
+    # 打架只佔角落一小塊，VLM 看不到肢體動作。
     # 視覺相似度檢索（CLIP）不受影響，一律用裁切圖。
-    vlm_view: Literal["crop", "full"] = "crop"
+    vlm_view: Literal["crop", "full", "zoom"] = "crop"
 
     # ---------- 文件切塊（Chunking）設定 ----------
     # 對應 rag/chunking/recursive_chunker.py 的預設值

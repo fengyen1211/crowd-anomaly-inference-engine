@@ -98,6 +98,58 @@ class FrameLoaderService:
         image.save(buffer, format="JPEG", quality=90)
         return buffer.getvalue()
 
+    def zoom_bbox(
+        self,
+        full_frame: bytes,
+        bbox: List[float],
+        padding_ratio: float = 0.25,
+        min_padding_px: int = 8,
+        target_long_side: int = 672,
+    ) -> bytes:
+        """
+        緊貼 bbox 裁切（只外擴一點點），再放大到長邊 target_long_side，給 VLM
+        看局部細節時用（Settings.vlm_view = "zoom"）。
+
+        crop_bbox() 外擴 3 倍、至少 100px，在 UCF 這種 320x240 的畫面上幾乎
+        等於整張畫面；打架只佔角落一小塊，qwen2.5vl:3b 只描述整體場景
+        （「等候區」「停車場」），完全沒提到肢體動作（見 UCF fight 10 筆抽樣）。
+        緊裁＋放大讓衝突區域佔滿畫面。
+
+        已經比 target_long_side 大的裁切區域不縮小，只有小圖才放大。
+        """
+        image = Image.open(io.BytesIO(full_frame)).convert("RGB")
+        img_w, img_h = image.size
+        x1, y1, x2, y2 = bbox
+
+        pad_x = max(min_padding_px, (x2 - x1) * padding_ratio)
+        pad_y = max(min_padding_px, (y2 - y1) * padding_ratio)
+        box = (
+            max(0, int(x1 - pad_x)),
+            max(0, int(y1 - pad_y)),
+            min(img_w, int(x2 + pad_x)),
+            min(img_h, int(y2 + pad_y)),
+        )
+        cropped = image.crop(box)
+
+        scale = target_long_side / max(cropped.size)
+        if scale > 1:
+            cropped = cropped.resize(
+                (round(cropped.width * scale), round(cropped.height * scale)), Image.LANCZOS
+            )
+
+        buffer = io.BytesIO()
+        cropped.save(buffer, format="JPEG", quality=90)
+        logger.info("FrameLoaderService 放大局部：bbox=%s -> box=%s（size=%s）", bbox, list(box), cropped.size)
+        return buffer.getvalue()
+
+    def vlm_view_image(self, full_frame: bytes, bbox: List[float], view: str) -> bytes:
+        """依 Settings.vlm_view 產生給 VLM 看的畫面（crop／full／zoom）。"""
+        if view == "full":
+            return self.draw_bbox(full_frame, bbox)
+        if view == "zoom":
+            return self.zoom_bbox(full_frame, bbox)
+        return self.crop_bbox(full_frame, bbox)
+
     def crop_bbox(
         self,
         full_frame: bytes,

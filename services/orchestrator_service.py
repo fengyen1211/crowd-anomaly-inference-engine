@@ -136,10 +136,13 @@ class OrchestratorService:
         context_frames = self._load_context_frames(record)
 
         # 3. VLM：中立地描述畫面內容（不判斷），組成 VLMObservation
-        box_drawn = self._vlm_view == "full"
-        vlm_image = self._frame_service.draw_bbox(full_frame, record.spatial_bbox) if box_drawn else cropped_frame
+        vlm_image = (
+            cropped_frame
+            if self._vlm_view == "crop"
+            else self._frame_service.vlm_view_image(full_frame, record.spatial_bbox, self._vlm_view)
+        )
         vlm_observation = VLMObservationBuilder.build(
-            self._vlm_client, vlm_image, record, context_images=context_frames, box_drawn=box_drawn
+            self._vlm_client, vlm_image, record, context_images=context_frames, view=self._vlm_view
         )
 
         # 3b. 驗證：LLM 只看描述文字，判斷是否支持規則系統的判斷（不做 RAG）
@@ -206,7 +209,8 @@ class OrchestratorService:
 
     def _load_context_frames(self, record: RawEventRecord) -> Optional[List[bytes]]:
         """
-        讀取＋裁切（或 vlm_view="full" 時畫上紅框）before_frame_file／after_frame_file（若有）。
+        讀取 before_frame_file／after_frame_file（若有），依 vlm_view 裁切、
+        畫紅框或放大，跟主要畫面一致。
 
         兩者跟主要畫面共用同一個 spatial_bbox（同機位、同座標，只是時間點
         不同），所以套用一樣的 crop_bbox() 裁切邏輯。目前只有 panic_scatter
@@ -220,8 +224,7 @@ class OrchestratorService:
         context_frames = []
         for frame_file in frame_files:
             full_frame = self._frame_service.load_context_frame(frame_file, record.record_id)
-            if self._vlm_view == "full":
-                context_frames.append(self._frame_service.draw_bbox(full_frame, record.spatial_bbox))
-            else:
-                context_frames.append(self._frame_service.crop_bbox(full_frame, record.spatial_bbox))
+            context_frames.append(
+                self._frame_service.vlm_view_image(full_frame, record.spatial_bbox, self._vlm_view)
+            )
         return context_frames

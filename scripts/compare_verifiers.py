@@ -35,6 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.dependencies import get_frame_service, get_ingestion_service, get_llm_client, get_vlm_client  # noqa: E402
+from config.settings import get_settings  # noqa: E402
 from config.yaml_config import load_config  # noqa: E402
 from llm.visual_verifier import VisualVerifier  # noqa: E402
 from vlm.observation_builder import VLMObservationBuilder  # noqa: E402
@@ -42,7 +43,9 @@ from vlm.schemas import VerificationVerdict, VLMObservation  # noqa: E402
 
 
 def describe(input_path: Path, output_path: Path) -> None:
-    """跟 OrchestratorService.observe() 前半段相同：讀畫面、裁切、VLM 中立描述。"""
+    """跟 OrchestratorService.observe() 前半段相同：讀畫面、依 VLM_VIEW 裁切／放大、VLM 中立描述。"""
+    view = get_settings().vlm_view
+    print(f"VLM_VIEW={view}")
     records = json.loads(input_path.read_text(encoding="utf-8"))["records"]
     ingestion = get_ingestion_service()
     frames = get_frame_service()
@@ -51,14 +54,14 @@ def describe(input_path: Path, output_path: Path) -> None:
     items = []
     for raw in records:
         record = ingestion.ingest_single(raw)
-        cropped = frames.crop_bbox(frames.load_full_frame(record), record.spatial_bbox)
+        image = frames.vlm_view_image(frames.load_full_frame(record), record.spatial_bbox, view)
         context = [
-            frames.crop_bbox(frames.load_context_frame(f, record.record_id), record.spatial_bbox)
+            frames.vlm_view_image(frames.load_context_frame(f, record.record_id), record.spatial_bbox, view)
             for f in (record.before_frame_file, record.after_frame_file)
             if f
         ] or None
         start = time.time()
-        observation = VLMObservationBuilder.build(vlm, cropped, record, context_images=context)
+        observation = VLMObservationBuilder.build(vlm, image, record, context_images=context, view=view)
         print(f"{record.record_id}（{time.time() - start:.1f}s）：{observation.visual_description}")
         items.append({
             "record": raw,
@@ -68,7 +71,9 @@ def describe(input_path: Path, output_path: Path) -> None:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
-        json.dumps({"vlm_model": load_config().vlm.model, "items": items}, ensure_ascii=False, indent=2),
+        json.dumps(
+            {"vlm_model": load_config().vlm.model, "vlm_view": view, "items": items}, ensure_ascii=False, indent=2
+        ),
         encoding="utf-8",
     )
     print(f"描述已寫入：{output_path}")

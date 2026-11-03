@@ -8,6 +8,11 @@
 #     VERIFIERS="gemma3:27b gemma3:12b" sbatch -A <計畫代號> ... run_verifier_compare.sbatch
 # sbatch 預設會把送出時的環境變數帶進 job，所以這樣寫有效。
 #
+# VLM 看的畫面由 VLM_VIEW 決定（crop／full／zoom，見 config/settings.py）。
+# 只想換驗證 prompt、沿用之前的描述時，用 DESCRIPTIONS 指定舊的描述檔，
+# 會跳過描述步驟：
+#     DESCRIPTIONS=reports/verifiers_<舊jobid>/descriptions.json sbatch ...
+#
 # 使用方式（在登入節點，project/ 目錄下執行）：
 #     sbatch -A <計畫代號> --mail-user=<email> scripts/nano4/run_verifier_compare.sbatch
 #
@@ -57,11 +62,16 @@ unload_models() {
 
 # ---------- 1. 產生描述（只跑一次） ----------
 echo ""
-echo "================ 描述：VLM=$DESCRIBE_VLM ================"
-"$OLLAMA_BIN" pull "$DESCRIBE_VLM"
-VLM_MODEL=$DESCRIBE_VLM python scripts/compare_verifiers.py describe \
-    --input "$INPUT" --output "$OUT_DIR/descriptions.json"
-unload_models
+if [ -n "${DESCRIPTIONS:-}" ]; then
+    echo "================ 描述：沿用 $DESCRIPTIONS ================"
+    cp "$DESCRIPTIONS" "$OUT_DIR/descriptions.json"
+else
+    echo "================ 描述：VLM=$DESCRIBE_VLM  VLM_VIEW=${VLM_VIEW:-crop} ================"
+    "$OLLAMA_BIN" pull "$DESCRIBE_VLM"
+    VLM_MODEL=$DESCRIBE_VLM python scripts/compare_verifiers.py describe \
+        --input "$INPUT" --output "$OUT_DIR/descriptions.json"
+    unload_models
+fi
 
 # ---------- 2. 每個驗證模型各跑一次 ----------
 # 某個模型下載或執行失敗（例如這版 Ollama 沒有該模型）不中斷整個實驗
