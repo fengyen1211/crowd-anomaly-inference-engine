@@ -54,14 +54,16 @@ def describe(input_path: Path, output_path: Path) -> None:
     items = []
     for raw in records:
         record = ingestion.ingest_single(raw)
-        image = frames.vlm_view_image(frames.load_full_frame(record), record.spatial_bbox, view)
+        full = frames.load_full_frame(record)
+        image = frames.vlm_view_image(full, record.spatial_bbox, view)
+        fallback = frames.crop_bbox(full, record.spatial_bbox) if view == "zoom" else None
         context = [
             frames.vlm_view_image(frames.load_context_frame(f, record.record_id), record.spatial_bbox, view)
             for f in (record.before_frame_file, record.after_frame_file)
             if f
         ] or None
         start = time.time()
-        observation = VLMObservationBuilder.build(vlm, image, record, context_images=context, view=view)
+        observation = VLMObservationBuilder.build(vlm, image, record, context_images=context, view=view, fallback_image=fallback)
         print(f"{record.record_id}（{time.time() - start:.1f}s）：{observation.visual_description}")
         items.append({
             "record": raw,

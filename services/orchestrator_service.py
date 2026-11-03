@@ -142,7 +142,9 @@ class OrchestratorService:
             else self._frame_service.vlm_view_image(full_frame, record.spatial_bbox, self._vlm_view)
         )
         vlm_observation = VLMObservationBuilder.build(
-            self._vlm_client, vlm_image, record, context_images=context_frames, view=self._vlm_view
+            self._vlm_client, vlm_image, record, context_images=context_frames, view=self._vlm_view,
+            # zoom 被拒答時（畫面暴力程度高）退回一般裁切圖，context 畫面不帶
+            fallback_image=cropped_frame if self._vlm_view == "zoom" else None,
         )
 
         # 3b. 驗證：LLM 只看描述文字，判斷是否支持規則系統的判斷（不做 RAG）
