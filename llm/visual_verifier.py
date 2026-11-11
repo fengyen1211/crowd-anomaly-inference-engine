@@ -48,7 +48,9 @@ class VisualVerifier:
         )
         try:
             data = parse_json_response(
-                self._llm_client.chat_completion(messages, json_schema=_VERIFICATION_SCHEMA)
+                # temperature=0：同一段描述每次要判得一樣。沒設時用 Ollama 預設值，
+                # verifiers_752027／752028 裡 prompt 完全相同的事件兩次判斷不同
+                self._llm_client.chat_completion(messages, json_schema=_VERIFICATION_SCHEMA, temperature=0)
             )
             verdict = VerificationVerdict(data["verification_verdict"])
             # schema 文法不保證數值範圍，超出 0～1 就夾回來

@@ -99,8 +99,10 @@ class Settings(BaseSettings):
     # 見 services/frame_filter.py）；只在 visual_embedding 是 clip 時生效
     non_camera_filter: bool = True
     # 驗證 prompt 的 contradict 條件（環境變數 VERIFIER_PROMPT），見
-    # prompts/verification_prompt.py；信任影像端之後只有 contradict 會撤回警報
-    verifier_prompt: Literal["default", "contact", "obvious"] = "default"
+    # prompts/verification_prompt.py；信任影像端之後只有 contradict 會撤回警報。
+    # 預設 contact：verifiers_752027（UCF 98 筆）default 撤回錯 2 筆（真打架被
+    # 寫成接吻、擁抱），contact 0 筆；obvious 一筆都沒擋對
+    verifier_prompt: Literal["default", "contact", "obvious"] = "contact"
 
     # ---------- 文件切塊（Chunking）設定 ----------
     # 對應 rag/chunking/recursive_chunker.py 的預設值
