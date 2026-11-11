@@ -40,6 +40,9 @@ INPUT=${1:-data/tinyformer7_events.json}
 DESCRIBE_VLM=${DESCRIBE_VLM:-qwen2.5vl:7b}
 # gemma3:27b 是比較基準，放第一個
 VERIFIERS=${VERIFIERS:-"gemma3:27b gemma3:4b gemma3:12b qwen3:8b qwen3:14b"}
+# 每個驗證模型各跑哪些 prompt 版本（見 prompts/verification_prompt.py），例如
+# PROMPTS="default contact obvious" VERIFIERS=gemma3:27b sbatch ...
+PROMPTS=${PROMPTS:-default}
 
 WORK=/work/$USER
 OUT_DIR=reports/verifiers_${SLURM_JOB_ID}
@@ -77,14 +80,17 @@ fi
 # 某個模型下載或執行失敗（例如這版 Ollama 沒有該模型）不中斷整個實驗
 FAILED=()
 for model in $VERIFIERS; do
-    echo ""
-    echo "================ 驗證：LLM=$model ================"
-    if "$OLLAMA_BIN" pull "$model" && LLM_MODEL=$model python scripts/compare_verifiers.py verify \
-        --descriptions "$OUT_DIR/descriptions.json" --output "$OUT_DIR/${model//[:\/]/_}.json"; then
-        :
-    else
-        FAILED+=("$model")
-    fi
+    "$OLLAMA_BIN" pull "$model" || { FAILED+=("$model"); continue; }
+    for prompt in $PROMPTS; do
+        echo ""
+        echo "================ 驗證：LLM=$model  prompt=$prompt ================"
+        suffix=""
+        if [ "$prompt" != default ]; then suffix="_$prompt"; fi
+        if ! LLM_MODEL=$model python scripts/compare_verifiers.py verify --prompt "$prompt" \
+            --descriptions "$OUT_DIR/descriptions.json" --output "$OUT_DIR/${model//[:\/]/_}${suffix}.json"; then
+            FAILED+=("$model/$prompt")
+        fi
+    done
     unload_models
 done
 

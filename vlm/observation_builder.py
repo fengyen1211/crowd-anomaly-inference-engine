@@ -104,6 +104,10 @@ class VLMObservationBuilder:
             plain_prompt = prompt[len(box_note):]
             description = _truncate_repetition(vlm_client.describe_image(fallback_image, prompt=plain_prompt))
 
+        # 描述寫進 log（換行改成「 / 」保持一行），之後可以不重跑 VLM、只換驗證
+        # prompt 或模型重算
+        logger.info("VLMDescription record_id=%s description=%s", record.record_id, description.replace("\n", " / "))
+
         return VLMObservation(
             record_id=record.record_id,
             visual_description=description,

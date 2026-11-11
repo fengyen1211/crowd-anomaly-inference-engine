@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     # 插圖、卡通等非監視器畫面不進入判斷流程（環境變數 NON_CAMERA_FILTER，
     # 見 services/frame_filter.py）；只在 visual_embedding 是 clip 時生效
     non_camera_filter: bool = True
+    # 驗證 prompt 的 contradict 條件（環境變數 VERIFIER_PROMPT），見
+    # prompts/verification_prompt.py；信任影像端之後只有 contradict 會撤回警報
+    verifier_prompt: Literal["default", "contact", "obvious"] = "default"
 
     # ---------- 文件切塊（Chunking）設定 ----------
     # 對應 rag/chunking/recursive_chunker.py 的預設值

@@ -22,6 +22,9 @@ scripts/compare_verifiers.py
     # 3. 彙整成一張表
     python scripts/compare_verifiers.py summarize reports/verifiers --reference gemma3:27b
 
+步驟 2 加 --prompt contact／obvious 改用其他版本的 contradict 條件（見
+prompts/verification_prompt.py），彙整時以「模型/版本」區分。
+
 Nano4 上用 scripts/nano4/run_verifier_compare.sbatch 一次跑完三步。
 """
 
@@ -81,11 +84,12 @@ def describe(input_path: Path, output_path: Path) -> None:
     print(f"描述已寫入：{output_path}")
 
 
-def verify(descriptions_path: Path, output_path: Path) -> None:
+def verify(descriptions_path: Path, output_path: Path, prompt: str = "default") -> None:
     data = json.loads(descriptions_path.read_text(encoding="utf-8"))
     ingestion = get_ingestion_service()
-    verifier = VisualVerifier(get_llm_client())
+    verifier = VisualVerifier(get_llm_client(), prompt)
     model = load_config().llm.model
+    print(f"驗證模型 {model}，prompt 版本 {prompt}")
 
     def observe(item):
         record = ingestion.ingest_single(item["record"])
@@ -125,7 +129,7 @@ def verify(descriptions_path: Path, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(
-            {"llm_model": model, "vlm_model": data["vlm_model"], "results": results},
+            {"llm_model": model, "prompt": prompt, "vlm_model": data["vlm_model"], "results": results},
             ensure_ascii=False, indent=2,
         ),
         encoding="utf-8",
@@ -143,7 +147,11 @@ def summarize(report_dir: Path, reference: str) -> None:
         print(f"{report_dir} 裡沒有驗證結果")
         return
 
-    by_model = {r["llm_model"]: {x["record_id"]: x for x in r["results"]} for r in reports}
+    def label(r):
+        prompt = r.get("prompt", "default")
+        return r["llm_model"] if prompt == "default" else f"{r['llm_model']}/{prompt}"
+
+    by_model = {label(r): {x["record_id"]: x for x in r["results"]} for r in reports}
     models = list(by_model)
     record_ids = [x["record_id"] for x in reports[0]["results"]]
     ref = by_model.get(reference)
@@ -182,6 +190,8 @@ def main() -> None:
     p = sub.add_parser("verify", help="用 LLM（LLM_MODEL）驗證描述")
     p.add_argument("--descriptions", required=True, help="describe 產生的描述檔")
     p.add_argument("--output", required=True, help="結果輸出路徑")
+    p.add_argument("--prompt", default="default", choices=["default", "contact", "obvious"],
+                   help="contradict 條件的版本（見 prompts/verification_prompt.py）")
 
     p = sub.add_parser("summarize", help="彙整同一目錄下各模型的結果")
     p.add_argument("report_dir", help="verify 輸出所在的目錄")
@@ -191,7 +201,7 @@ def main() -> None:
     if args.command == "describe":
         describe(Path(args.input), Path(args.output))
     elif args.command == "verify":
-        verify(Path(args.descriptions), Path(args.output))
+        verify(Path(args.descriptions), Path(args.output), args.prompt)
     else:
         summarize(Path(args.report_dir), args.reference)
 

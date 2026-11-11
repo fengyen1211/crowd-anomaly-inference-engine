@@ -262,7 +262,7 @@ def get_orchestrator_service() -> OrchestratorService:
         ingestion_service=get_ingestion_service(),
         frame_service=get_frame_service(),
         vlm_client=get_vlm_client(),
-        visual_verifier=VisualVerifier(get_verifier_client()),
+        visual_verifier=VisualVerifier(get_verifier_client(), get_settings().verifier_prompt),
         visual_embedding_provider=get_visual_embedding_client(),
         visual_retriever=get_visual_retriever(),
         text_retriever=get_text_retriever(),

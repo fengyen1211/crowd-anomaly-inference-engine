@@ -2,8 +2,8 @@
 llm/visual_verifier.py
 =========================
 依 VLM 的中立畫面描述，判斷畫面是否支持規則系統的事件類型，填入
-VLMObservation 的 verification_verdict／visual_confidence，作為初步警報的
-依據（見 services/alert_service.py 的 compose_preliminary()）。
+VLMObservation 的 verification_verdict／visual_confidence，決定是否撤回
+初步警報（見 services/alert_service.py 的 compose_verified()）。
 
 這一步不做 RAG、只看描述文字，所以很快（H200 上約 0.5 秒），初步警報
 不必等完整的推論流程。為什麼不讓 VLM 看圖時直接判斷，見
@@ -14,7 +14,7 @@ prompts/verification_prompt.py。
 """
 
 from llm.base import BaseLLMClient
-from prompts.verification_prompt import VerificationPromptBuilder
+from prompts.verification_prompt import PromptVariant, VerificationPromptBuilder
 from utils.llm_json import parse_json_response
 from utils.logger import get_logger
 from utils.schemas import RawEventRecord
@@ -36,12 +36,16 @@ _VERIFICATION_SCHEMA = {
 class VisualVerifier:
     """用 LLM 判斷 VLM 描述是否支持規則系統的判斷。"""
 
-    def __init__(self, llm_client: BaseLLMClient) -> None:
+    def __init__(self, llm_client: BaseLLMClient, prompt_variant: PromptVariant = "default") -> None:
         self._llm_client = llm_client
+        # contradict 條件的寬嚴（見 prompts/verification_prompt.py）
+        self._prompt_variant = prompt_variant
 
     def verify(self, record: RawEventRecord, observation: VLMObservation) -> VLMObservation:
         """回傳填入驗證結論的新 VLMObservation（不修改傳入的物件）。"""
-        messages = VerificationPromptBuilder.build(record.predicted_event_type, observation.visual_description)
+        messages = VerificationPromptBuilder.build(
+            record.predicted_event_type, observation.visual_description, self._prompt_variant
+        )
         try:
             data = parse_json_response(
                 self._llm_client.chat_completion(messages, json_schema=_VERIFICATION_SCHEMA)

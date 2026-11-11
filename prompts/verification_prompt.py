@@ -15,9 +15,20 @@ verification_verdict／visual_confidence（呼叫邏輯在 llm/visual_verifier.p
 - UCF fight 抽樣（verifiers_685625）裡 10 筆有 4 筆 support 的理由是
   「快速移動／相向而行／遮臉，可能與打架有關」，所以再補一條：理由要靠
   「可能、暗示」才連得上就判 uncertain；fight 的行為說明也寫明什麼不算
+
+contradict 的條件有三個版本（VERIFIER_PROMPT，見 config/settings.py）。信任
+影像端之後只有 contradict 會撤回警報，所以這裡的寬嚴直接決定漏報：
+- default：描述明顯是別的事就判 contradict（正常走動、表演、插圖……）
+- contact：同 default，但 fight 的描述裡有身體接觸（擁抱、親吻、握手）時
+  不判 contradict。UCF 751767 的 2 筆漏報都是真的打架被 VLM 寫成「接吻」
+  「友好的握手或擁抱」，verifier 據此判 contradict 撤回了警報
+- obvious：只有明顯的偵測錯誤才判 contradict（畫面裡沒有人、插圖或文字
+  畫面、人數明顯不夠），描述的行為跟事件不同只判 uncertain
 """
 
-from typing import Dict, List
+from typing import Dict, List, Literal
+
+PromptVariant = Literal["default", "contact", "obvious"]
 
 # 行為說明寫「核心動作」，不寫「突然」這類程度詞：程度詞會讓 LLM 要求描述
 # 逐字出現同樣的字眼，第一版因此把「人群開始四散」也判成 uncertain
@@ -43,7 +54,7 @@ _INSTRUCTION = """影像分析系統判斷某個畫面中出現了「{event_type
 
 請只根據這段描述中寫出的內容，判斷描述是否支持系統的判斷：
 - support：描述中直接寫出這個行為的核心動作。用詞不必完全相同（例如描述寫「有人在奔跑」就支持「有人在奔跑或明顯加速移動」）
-- contradict：描述的情況明顯是別的事（例如只是正常走動、排練、表演、比賽、觀看，或畫面是插圖、動畫而不是真實場景），與這個行為不符
+{contradict_rule}
 - uncertain：描述完全沒有提到相關的動作，或只有「有人在移動」這類泛泛的說法
 
 不要自行推測描述沒寫到的事：
@@ -56,13 +67,33 @@ _INSTRUCTION = """影像分析系統判斷某個畫面中出現了「{event_type
 - reason：一句話說明依據，引用描述中的關鍵字句"""
 
 
+_CONTRADICT_RULES = {
+    "default": "- contradict：描述的情況明顯是別的事（例如只是正常走動、排練、表演、比賽、觀看，"
+               "或畫面是插圖、動畫而不是真實場景），與這個行為不符",
+    "obvious": "- contradict：只用在偵測明顯出錯的情況：描述指出畫面（或紅框）裡沒有人、只有物體或空地；"
+               "畫面是插圖、動畫或文字而不是真實場景；人數明顯不足以構成這個行為（例如只有一個人）。"
+               "描述的人在做別的事（例如聊天、走動、擁抱）不算 contradict，判 uncertain",
+}
+_CONTRADICT_RULES["contact"] = _CONTRADICT_RULES["default"]
+
+# contact 版本的額外規則：VLM 常把衝突合理化成友善的身體接觸（1103 報告四之 3）
+_CONTACT_EXCEPTIONS = {
+    "fight": "\n  例外：描述中的人有身體接觸（例如擁抱、親吻、握手、拉住、抱住、倒在一起）時不要判 contradict，"
+             "視覺模型常把扭打寫成友善的接觸，這種情況判 uncertain",
+}
+
+
 class VerificationPromptBuilder:
     """組裝「依畫面描述驗證規則系統判斷」的 Prompt。"""
 
     @classmethod
-    def build(cls, event_type: str, description: str) -> List[Dict[str, str]]:
+    def build(cls, event_type: str, description: str, variant: PromptVariant = "default") -> List[Dict[str, str]]:
         hint = _EVENT_TYPE_HINTS.get(event_type)
+        contradict_rule = _CONTRADICT_RULES[variant]
+        if variant == "contact":
+            contradict_rule += _CONTACT_EXCEPTIONS.get(event_type, "")
         content = _INSTRUCTION.format(
+            contradict_rule=contradict_rule,
             event_type=event_type,
             hint_clause=f"（{hint}）" if hint else "",
             description=description,
