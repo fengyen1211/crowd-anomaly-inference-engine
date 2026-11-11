@@ -33,6 +33,8 @@ class AnalysisRecord(BaseModel):
     record_id: str
     status: AnalysisStatus
     preliminary_alert: Alert
+    # VLM 驗證完成後才有值：確認或撤回初步警報（見 compose_verified()）
+    verified_alert: Optional[Alert] = None
     # status=done 時才有值
     result: Optional[PipelineOutput] = None
     # status=failed 時才有值
@@ -58,6 +60,10 @@ class InMemoryAnalysisStore:
         with self._lock:
             self._records[record.record_id] = record
         return record
+
+    def verified(self, record_id: str, alert: Alert) -> None:
+        """記下驗證後的警報，狀態維持 analyzing（RAG + LLM 還在跑）。"""
+        self._update(record_id, verified_alert=alert)
 
     def complete(self, record_id: str, result: PipelineOutput) -> None:
         self._update(record_id, status=AnalysisStatus.DONE, result=result)

@@ -13,11 +13,13 @@ services/orchestrator_service.py
     -> Visual Retriever（相似歷史事件） -> Knowledge Retriever（SOP 片段）
     -> Reasoning(LLM) -> Alert Composer -> PipelineOutput
 
-分成兩個階段：observe()（VLM 描述＋驗證，產生初步警報）與 analyze()
-（RAG + LLM，產生最終警報）。初步警報不必等 RAG + LLM 跑完。
+分成三個階段：
+- detect()：影像端偵測到就發初步警報（信任影像端，不等 VLM）
+- verify()：VLM 描述 + 驗證，contradict 時撤回初步警報
+- analyze()：RAG + LLM，補上摘要、可能原因與應變建議
 
-畫面是插圖、卡通這類非監視器畫面時（services/frame_filter.py），observe()
-在 VLM 之前就停下，初步警報與最終警報都是 info，不跑 VLM、驗證與 RAG + LLM。
+畫面是插圖、卡通這類非監視器畫面時（services/frame_filter.py），detect()
+就停下，警報是 info，不跑 VLM、驗證與 RAG + LLM。
 
 這是唯一「同時依賴」其他所有 service / vlm / embedding / rag / llm
 模組的地方，其他模組彼此之間不會互相依賴，全部由這裡透過建構子注入
@@ -32,7 +34,7 @@ TODO：
 - [ ] frame_service 讀不到畫面檔案時的降級策略（目前會直接讓例外往上拋）
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, List, Optional
 
 from embedding.base import BaseEmbeddingProvider
@@ -57,13 +59,17 @@ logger = get_logger(__name__)
 
 @dataclass
 class ObservationStage:
-    """observe() 的結果，原樣交給 analyze() 接續處理。"""
+    """detect()／verify() 的結果，原樣交給下一步接續處理。"""
 
     record: RawEventRecord
     cropped_frame: bytes
-    # 被 NonCameraFrameFilter 略過時沒有 VLM 觀察（None），skipped_reason 記原因
-    vlm_observation: Optional[VLMObservation]
+    full_frame: bytes
+    # 影像端偵測到就發的初步警報（不等 VLM）
     preliminary_alert: Alert
+    # verify() 之後才有值：VLM 觀察與依驗證結論修正後的警報
+    vlm_observation: Optional[VLMObservation] = None
+    verified_alert: Optional[Alert] = None
+    # 被 NonCameraFrameFilter 略過時記原因，之後的步驟都不跑
     skipped_reason: Optional[str] = None
 
 
@@ -110,30 +116,35 @@ class OrchestratorService:
         self,
         raw_json: dict,
         on_preliminary_alert: Optional[Callable[[Alert], None]] = None,
+        on_verified_alert: Optional[Callable[[Alert], None]] = None,
     ) -> PipelineOutput:
         """
         執行完整的單筆事件處理流程，回傳給呼叫端看的精簡結果。
 
         Args:
             raw_json: 影像端輸出的單筆事件 JSON（dict）。
-            on_preliminary_alert: VLM 看完畫面、初步警報一產生就呼叫，
-                    不等後面的 RAG + LLM（批次腳本用它記錄初步警報的時間點）。
+            on_preliminary_alert: 初步警報一產生就呼叫（影像端偵測到就發，不等 VLM）。
+            on_verified_alert: VLM 描述與驗證完成、警報等級確認（或撤回）時呼叫，
+                    不等後面的 RAG + LLM。批次腳本用這兩個 callback 記錄時間點。
 
         Returns:
             PipelineOutput
         """
-        stage = self.observe(raw_json)
+        stage = self.detect(raw_json)
         if on_preliminary_alert is not None:
             on_preliminary_alert(stage.preliminary_alert)
+        stage = self.verify(stage)
+        if on_verified_alert is not None:
+            on_verified_alert(stage.verified_alert)
         return self.analyze(stage)
 
-    def observe(self, raw_json: dict) -> ObservationStage:
+    def detect(self, raw_json: dict) -> ObservationStage:
         """
-        第一階段：驗證事件、讀取畫面、VLM 觀察，組成初步警報。
+        第一階段：驗證事件、讀取畫面，影像端偵測到就組成初步警報，不等 VLM。
 
-        跟 analyze() 拆開，讓呼叫端可以先把初步警報送出去，再處理耗時的
-        RAG + LLM（見 routers/events.py：/ingest 拿到初步警報就回應，
-        analyze() 在背景執行）。
+        等級採「信任影像端」（見 services/alert_service.py），預設就是要發，
+        所以不必等 VLM 那 2～3 秒；VLM 判 contradict 時由 verify() 撤回。
+        插圖等非監視器畫面在這裡就停下（只需要 CLIP，H200 上幾十毫秒）。
         """
         # 1. Ingestion：驗證原始 JSON，取得型別安全的事件資料
         record = self._ingestion_service.ingest_single(raw_json)
@@ -149,40 +160,55 @@ class OrchestratorService:
             return ObservationStage(
                 record=record,
                 cropped_frame=cropped_frame,
-                vlm_observation=None,
+                full_frame=full_frame,
                 preliminary_alert=self._alert_service.compose_skipped(record, skipped_reason),
                 skipped_reason=skipped_reason,
             )
 
+        # 3. 初步警報：只看影像端的事件類型
+        return ObservationStage(
+            record=record,
+            cropped_frame=cropped_frame,
+            full_frame=full_frame,
+            preliminary_alert=self._alert_service.compose_preliminary(record),
+        )
+
+    def verify(self, stage: ObservationStage) -> ObservationStage:
+        """
+        第二階段：VLM 中立描述 + 驗證，依驗證結論確認或撤回初步警報（不做 RAG）。
+        """
+        if stage.skipped_reason:
+            return replace(stage, verified_alert=stage.preliminary_alert)
+
+        record = stage.record
+        full_frame = stage.full_frame
         context_frames = self._load_context_frames(record)
 
-        # 3. VLM：中立地描述畫面內容（不判斷），組成 VLMObservation
+        # 4. VLM：中立地描述畫面內容（不判斷），組成 VLMObservation
         vlm_image = (
-            cropped_frame
+            stage.cropped_frame
             if self._vlm_view == "crop"
             else self._frame_service.vlm_view_image(full_frame, record.spatial_bbox, self._vlm_view)
         )
         vlm_observation = VLMObservationBuilder.build(
             self._vlm_client, vlm_image, record, context_images=context_frames, view=self._vlm_view,
             # zoom 被拒答時（畫面暴力程度高）退回一般裁切圖，context 畫面不帶
-            fallback_image=cropped_frame if self._vlm_view == "zoom" else None,
+            fallback_image=stage.cropped_frame if self._vlm_view == "zoom" else None,
         )
 
-        # 3b. 驗證：LLM 只看描述文字，判斷是否支持規則系統的判斷（不做 RAG）
+        # 4b. 驗證：LLM 只看描述文字，判斷是否支持規則系統的判斷
         vlm_observation = self._visual_verifier.verify(record, vlm_observation)
 
-        # 3c. 初步警報：只看規則系統標籤與上一步的驗證結論
-        preliminary_alert = self._alert_service.compose_preliminary(record, vlm_observation)
+        # 4c. 確認或撤回初步警報
+        verified_alert = self._alert_service.compose_verified(record, vlm_observation, stage.preliminary_alert)
+        return replace(stage, vlm_observation=vlm_observation, verified_alert=verified_alert)
 
-        return ObservationStage(
-            record=record,
-            cropped_frame=cropped_frame,
-            vlm_observation=vlm_observation,
-            preliminary_alert=preliminary_alert,
-        )
+    def observe(self, raw_json: dict) -> ObservationStage:
+        """detect() + verify()，給不需要分開兩步的呼叫端。"""
+        return self.verify(self.detect(raw_json))
 
     def analyze(self, stage: ObservationStage) -> PipelineOutput:
-        """第二階段：RAG 檢索 + LLM 推論，組成最終警報與完整結果。"""
+        """第三階段：RAG 檢索 + LLM 推論，組成最終警報與完整結果。"""
         record = stage.record
         if stage.skipped_reason:
             return PipelineOutput(
@@ -198,7 +224,7 @@ class OrchestratorService:
         cropped_frame = stage.cropped_frame
         vlm_observation = stage.vlm_observation
 
-        # 4. Embedding：
+        # 5. Embedding：
         #    - 視覺向量：直接對「裁切後的畫面」算 CLIP/SigLIP embedding，
         #      落在跟 rag/visual_indexer.py 寫入歷史事件時相同的向量空間，
         #      才能做視覺相似度比對（用文字 embedding 去查視覺向量庫，
@@ -207,13 +233,13 @@ class OrchestratorService:
         visual_query_embedding = self._visual_embedding_provider.embed_image([cropped_frame])[0]
         query_text = f"{record.caption}\n{vlm_observation.visual_description}"
 
-        # 5. Retriever：用視覺向量查詢視覺相似的歷史事件
+        # 6. Retriever：用視覺向量查詢視覺相似的歷史事件
         similar_cases = self._visual_retriever.retrieve(visual_query_embedding)
 
-        # 6. Knowledge：用文字查詢知識庫（SOP / 歷史事件描述）中的相關片段
+        # 7. Knowledge：用文字查詢知識庫（SOP / 歷史事件描述）中的相關片段
         knowledge_snippets = self._text_retriever.retrieve(query_text)
 
-        # 6b. News：用同一份查詢文字查詢新聞真實案例知識庫（獨立 collection，
+        # 7b. News：用同一份查詢文字查詢新聞真實案例知識庫（獨立 collection，
         #     讓 LLM 可以把「法規依據」跟「真實案例」分開引用，見 rag_prompt.py）
         news_precedents = self._news_retriever.retrieve(query_text)
 
@@ -223,15 +249,15 @@ class OrchestratorService:
             news_precedents=news_precedents,
         )
 
-        # 7. LLM：綜合以上所有資訊，產生摘要、驗證判定、可能原因、應變建議
+        # 8. LLM：綜合以上所有資訊，產生摘要、驗證判定、可能原因、應變建議
         analysis_result = self._reasoning_pipeline.run(record, vlm_observation, retrieved_context)
 
-        # 8. Alert：純規則邏輯依驗證結論決定警報等級（推論 LLM 的判定只寫進報告）
+        # 9. Alert：純規則邏輯依驗證結論決定警報等級（推論 LLM 的判定只寫進報告）
         alert = self._alert_service.compose(record, analysis_result, vlm_observation)
 
         logger.info("Orchestrator 完成處理 record_id=%s alert_level=%s", record.record_id, alert.severity.value)
 
-        # 9. Output：組成呼叫端要的精簡結果
+        # 10. Output：組成呼叫端要的精簡結果
         return PipelineOutput(
             summary=analysis_result.summary,
             event_type=record.predicted_event_type,
@@ -239,6 +265,7 @@ class OrchestratorService:
             recommendation=analysis_result.recommended_actions,
             alert_level=alert.severity,
             preliminary_alert_level=stage.preliminary_alert.severity,
+            verification_verdict=vlm_observation.verification_verdict.value,
         )
 
     def _load_context_frames(self, record: RawEventRecord) -> Optional[List[bytes]]:

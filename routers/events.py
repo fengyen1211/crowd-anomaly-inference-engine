@@ -41,12 +41,12 @@ def ingest_event(
     store: InMemoryAnalysisStore = Depends(get_analysis_store),
 ) -> AnalysisRecord:
     """
-    接收影像端輸出的事件 JSON，VLM 看完畫面就回傳初步警報（202，
-    status=analyzing），RAG + LLM 在背景補上完整分析，完成後用
-    GET /events/{record_id}/analysis 查詢。
+    接收影像端輸出的事件 JSON，立刻回傳初步警報（202，status=analyzing，
+    不等 VLM）。VLM 驗證（確認或撤回，寫進 verified_alert）與 RAG + LLM
+    在背景補上，用 GET /events/{record_id}/analysis 查詢。
     """
     try:
-        stage = orchestrator.observe(raw_json)
+        stage = orchestrator.detect(raw_json)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except FileNotFoundError as exc:
@@ -62,6 +62,8 @@ def _analyze_in_background(
 ) -> None:
     record_id = stage.record.record_id
     try:
+        stage = orchestrator.verify(stage)
+        store.verified(record_id, stage.verified_alert)
         store.complete(record_id, orchestrator.analyze(stage))
     except Exception as exc:  # noqa: BLE001 - 背景任務沒有人接例外，必須記下來讓 /analysis 查得到
         logger.exception("record_id=%s 背景分析失敗", record_id)

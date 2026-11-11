@@ -25,9 +25,12 @@ class PipelineOutput(BaseModel):
     possible_causes: List[str]
     recommendation: List[str]
     alert_level: AlertSeverity
-    # 初步警報等級（見 AlertComposerService.compose_preliminary()）。跟
-    # alert_level 依同一個驗證結論決定，正常情況下兩者相同
+    # 初步警報等級：影像端偵測到就發，只看事件類型（見
+    # AlertComposerService.compose_preliminary()）。跟 alert_level 不同代表
+    # 驗證判 contradict、初步警報被撤回
     preliminary_alert_level: Optional[AlertSeverity] = None
+    # 驗證結論（support／uncertain／contradict），略過的事件沒有
+    verification_verdict: Optional[str] = None
     # 沒進入判斷流程的原因（例如畫面是插圖，見 services/frame_filter.py）；
     # 有值時 alert_level 固定 info，summary 就是這個原因
     skipped_reason: Optional[str] = None

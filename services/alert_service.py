@@ -85,34 +85,63 @@ class AlertComposerService:
         )
         return alert
 
-    def compose_preliminary(self, event_record: RawEventRecord, vlm_observation: VLMObservation) -> Alert:
+    def compose_preliminary(self, event_record: RawEventRecord) -> Alert:
         """
-        只依規則系統標籤與 VLM 驗證結論組成「初步警報」，不等 RAG + LLM。
+        影像端偵測到就發的「初步警報」，不等 VLM（信任影像端，見 _severity()）。
 
-        等級跟最終警報用同一套規則、同一個依據（見 _severity_from_verification()），
-        所以兩者等級相同；最終警報只是補上摘要、原因與應變建議。
+        等級只看事件類型：panic 類 critical，其他 warning。VLM 驗證完成後由
+        compose_verified() 確認或撤回。
         """
-        severity = _severity_from_verification(event_record, vlm_observation)
-
+        severity = _severity(event_record.predicted_event_type, rejected=False)
         alert = Alert(
             record_id=event_record.record_id,
             severity=severity,
             title=f"[{severity.value.upper()}・初步] {event_record.predicted_event_type} 事件",
-            short_message=vlm_observation.visual_description,
-            full_report="\n".join(
-                [
-                    "初步警報：僅依規則系統標籤與視覺模型觀察，完整分析（原因、應變建議）產生中。",
-                    f"畫面觀察：{vlm_observation.visual_description}",
-                    f"視覺驗證：{vlm_observation.verification_verdict.value}"
-                    f"（信心分數：{vlm_observation.visual_confidence:.2f}）"
-                    + (f"，依據：{vlm_observation.verification_reason}" if vlm_observation.verification_reason else ""),
-                ]
-            ),
+            short_message=f"影像端偵測到 {event_record.predicted_event_type}，畫面確認中。",
+            full_report="初步警報：影像端偵測到即發出，視覺模型確認與完整分析（原因、應變建議）產生中。",
             frame_file=event_record.frame_file,
         )
         logger.info(
             "AlertComposerService 組成初步警報：record_id=%s severity=%s",
             event_record.record_id, severity.value,
+        )
+        return alert
+
+    def compose_verified(
+        self, event_record: RawEventRecord, vlm_observation: VLMObservation, preliminary_alert: Alert
+    ) -> Alert:
+        """
+        VLM 描述與驗證完成後確認或撤回初步警報，不等 RAG + LLM。
+
+        驗證判 contradict 時等級降成 info，標題標「撤回」，讓前端把已送出的
+        初步警報收回；其餘情況維持初步警報的等級，補上畫面觀察。
+        """
+        severity = _severity_from_verification(event_record, vlm_observation)
+        revoked = severity != preliminary_alert.severity
+        tag = "撤回" if revoked else "確認"
+        verification = (
+            f"視覺驗證：{vlm_observation.verification_verdict.value}"
+            f"（信心分數：{vlm_observation.visual_confidence:.2f}）"
+            + (f"，依據：{vlm_observation.verification_reason}" if vlm_observation.verification_reason else "")
+        )
+        alert = Alert(
+            record_id=event_record.record_id,
+            severity=severity,
+            title=f"[{severity.value.upper()}・{tag}] {event_record.predicted_event_type} 事件",
+            short_message=vlm_observation.visual_description,
+            full_report="\n".join(
+                [
+                    ("初步警報已撤回：畫面描述與偵測結果明顯不符。" if revoked
+                     else "初步警報維持：畫面描述沒有推翻偵測結果。完整分析（原因、應變建議）產生中。"),
+                    f"畫面觀察：{vlm_observation.visual_description}",
+                    verification,
+                ]
+            ),
+            frame_file=event_record.frame_file,
+        )
+        logger.info(
+            "AlertComposerService 驗證後警報：record_id=%s severity=%s（%s）",
+            event_record.record_id, severity.value, tag,
         )
         return alert
 
