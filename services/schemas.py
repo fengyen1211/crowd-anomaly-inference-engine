@@ -28,3 +28,6 @@ class PipelineOutput(BaseModel):
     # 初步警報等級（見 AlertComposerService.compose_preliminary()）。跟
     # alert_level 依同一個驗證結論決定，正常情況下兩者相同
     preliminary_alert_level: Optional[AlertSeverity] = None
+    # 沒進入判斷流程的原因（例如畫面是插圖，見 services/frame_filter.py）；
+    # 有值時 alert_level 固定 info，summary 就是這個原因
+    skipped_reason: Optional[str] = None

@@ -8,6 +8,9 @@ services/alert_service.py
   visual_confidence）套用規則，決定警報等級（info / warning / critical）
 - 組成給 Web 介面顯示的警報內容（標題/簡短訊息/完整報告）
 
+等級採「信任影像端」：影像端偵測到就發，驗證只在 contradict（描述明顯是
+別的事）時把它降成 info，uncertain 照發。見 _severity() 的說明。
+
 最終警報的等級跟初步警報一樣只看驗證結論，不看推論 LLM 的 final_verdict。
 sweep_565835 裡 gemma3:4b 的推論把驗證判為 contradict（描述寫「觀眾隨音樂
 擺動，沒有明顯四散」）的 panic_scatter 事件判成 confirmed、升成 critical；
@@ -113,39 +116,47 @@ class AlertComposerService:
         )
         return alert
 
+    def compose_skipped(self, event_record: RawEventRecord, reason: str) -> Alert:
+        """畫面沒進入判斷流程（例如是插圖，見 services/frame_filter.py）時的初步警報，固定 info。"""
+        logger.info("AlertComposerService 略過事件：record_id=%s（%s）", event_record.record_id, reason)
+        return Alert(
+            record_id=event_record.record_id,
+            severity=AlertSeverity.INFO,
+            title=f"[INFO・略過] {event_record.predicted_event_type} 事件",
+            short_message=reason,
+            full_report=reason,
+            frame_file=event_record.frame_file,
+        )
 
 
 def _severity_from_verification(event_record: RawEventRecord, vlm_observation: VLMObservation) -> AlertSeverity:
-    """依驗證結論決定等級：support 視為判斷成立、contradict 視為被推翻。"""
+    """依驗證結論決定等級：只有 contradict 會推翻影像端的判斷。"""
     return _severity(
         event_record.predicted_event_type,
         rejected=vlm_observation.verification_verdict == VerificationVerdict.CONTRADICT,
-        confirmed=vlm_observation.verification_verdict == VerificationVerdict.SUPPORT,
-        confidence=vlm_observation.visual_confidence,
     )
 
 
-def _severity(event_type: str, rejected: bool, confirmed: bool, confidence: float) -> AlertSeverity:
+def _severity(event_type: str, rejected: bool) -> AlertSeverity:
     """
-    純規則邏輯，依事件類型、判定與信心分數決定嚴重程度。
+    純規則邏輯（信任影像端）：
+    1. 驗證判 contradict（描述明顯是別的事）-> info
+    2. 恐慌性移動（見 _PANIC_EVENT_TYPES）-> critical，影響人身安全風險最高
+    3. 其餘（support、uncertain）-> warning
 
-    規則（由上而下依序判斷，符合就回傳，不繼續往下比對）：
-    1. 規則系統的判斷被推翻（rejected）-> 原本的異常判斷不成立 -> info
-    2. 恐慌性移動（見 _PANIC_EVENT_TYPES）判斷成立且信心夠高 -> 影響人身安全風險最高 -> critical
-    3. 判斷維持成立（confirmed）且信心夠高 -> warning
-    4. 其餘情況（uncertain、信心不足...）-> info，避免誤報造成不必要的恐慌
+    原本是「support 且信心 >= 0.6 才發」，uncertain 一律降成 info。1103 的
+    離線重算（UCF 684501，99 筆）顯示這樣分不出真假：該通報的留下 18/47
+    （38%）、不該通報的留下 19/52（37%），比例幾乎一樣；VLM 在 320x240 的
+    監視器畫面上大多寫不出打架動作，verifier 只能判 uncertain，真事件就被
+    擋掉。改成只有 contradict 降級後，同一批判斷重算為 45/47 有通報、
+    48/52 誤報——漏報幾乎消失，誤報量改由影像端的準確度決定。
 
-    confidence 是「對這個判定本身」的信心，不是「事件為真」的機率：uncertain
-    搭配 0.7 代表「有七成把握無法確定」。所以第 2 條也要求 confirmed，否則
-    uncertain 0.7 會被升成 critical（sweep 565487 的 panic_scatter_p3 就是這樣）。
+    contradict 不看信心：contradict >= 0.8 才降級的版本重算結果幾乎相同。
     """
     if rejected:
         return AlertSeverity.INFO
 
-    if event_type in _PANIC_EVENT_TYPES and confirmed and confidence >= 0.7:
+    if event_type in _PANIC_EVENT_TYPES:
         return AlertSeverity.CRITICAL
 
-    if confirmed and confidence >= 0.6:
-        return AlertSeverity.WARNING
-
-    return AlertSeverity.INFO
+    return AlertSeverity.WARNING

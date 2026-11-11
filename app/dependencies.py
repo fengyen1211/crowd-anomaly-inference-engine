@@ -35,6 +35,7 @@ from rag.visual_indexer import VisualEventIndexer
 from rag.visual_retriever import VisualSimilarityRetriever
 from services.analysis_store import InMemoryAnalysisStore
 from services.alert_service import AlertComposerService
+from services.frame_filter import NonCameraFrameFilter
 from services.frame_service import FrameLoaderService
 from services.ingestion_service import IngestionService
 from services.orchestrator_service import OrchestratorService
@@ -250,6 +251,13 @@ def get_orchestrator_service() -> OrchestratorService:
     參數（例如 settings: Settings），FastAPI 會誤判成請求 body 的
     一個欄位，導致 API 呼叫端必須多包一層 {"settings": ...} 才能用。
     """
+    # 插圖過濾沿用視覺檢索的 CLIP；不是 CLIP 時（mock 的向量是隨機的）不過濾
+    app_config = load_config()
+    frame_filter = (
+        NonCameraFrameFilter(get_visual_embedding_client())
+        if get_settings().non_camera_filter and app_config.visual_embedding.provider == "clip"
+        else None
+    )
     return OrchestratorService(
         ingestion_service=get_ingestion_service(),
         frame_service=get_frame_service(),
@@ -262,4 +270,5 @@ def get_orchestrator_service() -> OrchestratorService:
         reasoning_pipeline=get_reasoning_pipeline(),
         alert_service=get_alert_service(),
         vlm_view=get_settings().vlm_view,
+        frame_filter=frame_filter,
     )

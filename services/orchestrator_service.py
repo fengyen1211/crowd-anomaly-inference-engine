@@ -9,12 +9,15 @@ services/orchestrator_service.py
          -> Knowledge -> LLM -> Output
 
 也就是：
-    Ingestion -> Frame Loader -> VLM(+ObservationBuilder) -> VisualVerifier -> Embedding
+    Ingestion -> Frame Loader -> NonCameraFrameFilter -> VLM(+ObservationBuilder) -> VisualVerifier -> Embedding
     -> Visual Retriever（相似歷史事件） -> Knowledge Retriever（SOP 片段）
     -> Reasoning(LLM) -> Alert Composer -> PipelineOutput
 
 分成兩個階段：observe()（VLM 描述＋驗證，產生初步警報）與 analyze()
 （RAG + LLM，產生最終警報）。初步警報不必等 RAG + LLM 跑完。
+
+畫面是插圖、卡通這類非監視器畫面時（services/frame_filter.py），observe()
+在 VLM 之前就停下，初步警報與最終警報都是 info，不跑 VLM、驗證與 RAG + LLM。
 
 這是唯一「同時依賴」其他所有 service / vlm / embedding / rag / llm
 模組的地方，其他模組彼此之間不會互相依賴，全部由這裡透過建構子注入
@@ -39,11 +42,12 @@ from rag.schemas import RetrievedContext
 from rag.text_retriever import KnowledgeTextRetriever
 from rag.visual_retriever import VisualSimilarityRetriever
 from services.alert_service import AlertComposerService
+from services.frame_filter import NonCameraFrameFilter
 from services.frame_service import FrameLoaderService
 from services.ingestion_service import IngestionService
 from services.schemas import PipelineOutput
 from utils.logger import get_logger
-from utils.schemas import Alert, RawEventRecord
+from utils.schemas import Alert, AlertSeverity, RawEventRecord
 from vlm.base import BaseVLM
 from vlm.observation_builder import VLMObservationBuilder
 from vlm.schemas import VLMObservation
@@ -57,8 +61,10 @@ class ObservationStage:
 
     record: RawEventRecord
     cropped_frame: bytes
-    vlm_observation: VLMObservation
+    # 被 NonCameraFrameFilter 略過時沒有 VLM 觀察（None），skipped_reason 記原因
+    vlm_observation: Optional[VLMObservation]
     preliminary_alert: Alert
+    skipped_reason: Optional[str] = None
 
 
 class OrchestratorService:
@@ -83,6 +89,7 @@ class OrchestratorService:
         reasoning_pipeline: ReasoningPipeline,
         alert_service: AlertComposerService,
         vlm_view: str = "crop",
+        frame_filter: Optional[NonCameraFrameFilter] = None,
     ) -> None:
         self._ingestion_service = ingestion_service
         self._frame_service = frame_service
@@ -96,6 +103,8 @@ class OrchestratorService:
         self._alert_service = alert_service
         # VLM 看裁切圖（crop）還是整張畫面加紅框（full），見 config/settings.py
         self._vlm_view = vlm_view
+        # None 表示不過濾（visual_embedding 不是 CLIP 時，見 app/dependencies.py）
+        self._frame_filter = frame_filter
 
     def process_event(
         self,
@@ -133,6 +142,18 @@ class OrchestratorService:
         # 2. Frame Loader：讀取畫面並依 bbox 裁切出感興趣區域
         full_frame = self._frame_service.load_full_frame(record)
         cropped_frame = self._frame_service.crop_bbox(full_frame, record.spatial_bbox)
+
+        # 2b. 插圖、卡通等非監視器畫面不進入判斷流程（見 services/frame_filter.py）
+        skipped_reason = self._frame_filter.check(full_frame, record.record_id) if self._frame_filter else None
+        if skipped_reason:
+            return ObservationStage(
+                record=record,
+                cropped_frame=cropped_frame,
+                vlm_observation=None,
+                preliminary_alert=self._alert_service.compose_skipped(record, skipped_reason),
+                skipped_reason=skipped_reason,
+            )
+
         context_frames = self._load_context_frames(record)
 
         # 3. VLM：中立地描述畫面內容（不判斷），組成 VLMObservation
@@ -163,6 +184,17 @@ class OrchestratorService:
     def analyze(self, stage: ObservationStage) -> PipelineOutput:
         """第二階段：RAG 檢索 + LLM 推論，組成最終警報與完整結果。"""
         record = stage.record
+        if stage.skipped_reason:
+            return PipelineOutput(
+                summary=stage.skipped_reason,
+                event_type=record.predicted_event_type,
+                possible_causes=[],
+                recommendation=[],
+                alert_level=AlertSeverity.INFO,
+                preliminary_alert_level=stage.preliminary_alert.severity,
+                skipped_reason=stage.skipped_reason,
+            )
+
         cropped_frame = stage.cropped_frame
         vlm_observation = stage.vlm_observation
 
