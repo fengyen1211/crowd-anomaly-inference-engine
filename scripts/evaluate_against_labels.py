@@ -9,14 +9,22 @@ scripts/evaluate_against_labels.py
   定位）或 scene（整個畫面，檢驗該不該發警報，預設）。第一版標註只有一題
   occurred（問的是框內），兩種 target 都退回用它。標註「有發生」應判 support；「沒有發生」判 contradict 或
   uncertain 都算對（兩者都不會發出警報）；「看不出來」不計入。
-- 警報等級：標註的通報程度 none／attention／danger 對應 info／warning／
-  critical；低於標註算漏報、高於標註算誤報。
+- 通報：標註 attention 或 danger 應該通報（warning、critical 都算有通報），
+  none 不該通報；應通報卻是 info 算漏報，不該通報卻發出算誤報。
+- 等級：只看「應該通報、也有通報」的事件，danger 應為 critical、attention
+  應為 warning；danger 只拿到 warning 算低估，attention 拿到 critical 算高估。
+  舊版把 danger 直接對應 critical、低於標註就算漏報，但警報規則
+  （services/alert_service.py）只有 panic 類與場景模型的爆炸／縱火／槍擊會發
+  critical，標成 danger 的 fight 拿到 warning 其實有通報，卻被算成漏報。
+- 通知：有通報的事件中，沒有併入同一支攝影機較早警報（merged_into，見
+  services/alert_throttle.py）、實際另外通知的則數。
 
 驗證判斷只記在 log（VisualVerifier 那一行），所以要一起給 sweep 的 .out。
 
 使用方式（在 project/ 目錄下執行）：
     python scripts/evaluate_against_labels.py data/labels_video7.json \
         reports/sweep_566003 logs/model-sweep_566003.out
+    python scripts/evaluate_against_labels.py data/labels_ucf2_gt.json reports/sweep_793568 --details
 """
 
 import argparse
@@ -36,6 +44,7 @@ def main() -> None:
     parser.add_argument("sweep_dir", help="reports/sweep_<jobid>")
     parser.add_argument("log", nargs="?", help="logs/model-sweep_<jobid>.out（沒有就只評估警報等級）")
     parser.add_argument("--target", choices=["box", "scene"], default="scene", help="驗證判斷對照框內或整體畫面")
+    parser.add_argument("--details", action="store_true", help="逐筆列出判錯、漏報、誤報與等級不符的事件")
     args = parser.parse_args()
 
     labels = {x["record_id"]: x for x in json.loads(Path(args.labels).read_text(encoding="utf-8"))["labels"]}
@@ -44,13 +53,16 @@ def main() -> None:
     verdicts = _VERDICT_RE.findall(Path(args.log).read_text(encoding="utf-8", errors="replace")) if args.log else []
     vi = 0
 
-    print(f"{'組別':<10}{'驗證判對':>8}{'等級正確':>8}{'漏報':>6}{'誤報':>6}   錯誤明細")
+    print(f"{'組別':<10}{'驗證判對':>8}{'漏報':>8}{'誤報':>8}{'等級一致':>8}{'低估':>6}{'高估':>6}{'通知':>10}")
     for arm in _ARMS:
         path = Path(args.sweep_dir) / f"{arm}.json"
         if not path.exists():
             continue
         results = json.loads(path.read_text(encoding="utf-8"))["results"]
-        v_ok = v_n = lvl_ok = miss = false_alarm = n = 0
+        v_ok = v_n = 0
+        should = shouldnt = miss = false_alarm = 0
+        both = lvl_ok = under = over = 0
+        alerted = notified = 0
         notes = []
         for r in results:
             rid = r["record_id"]
@@ -71,19 +83,39 @@ def main() -> None:
                 if not correct:
                     notes.append(f"{short} 判 {verdict}（實際{'有' if occurred == 'yes' else '沒有'}）")
 
+            got = r["output"]["alert_level"]
+            if got != "info":
+                alerted += 1
+                notified += not r["output"].get("merged_into")
+
             truth = _DANGER_TO_LEVEL.get(label.get("danger"))
-            if truth:
-                n += 1
-                got = r["output"]["alert_level"]
+            if truth == "info":
+                shouldnt += 1
+                if got != "info":
+                    false_alarm += 1
+                    notes.append(f"{short} 誤報 {got}")
+            elif truth:
+                should += 1
+                if got == "info":
+                    miss += 1
+                    notes.append(f"{short} 漏報（應為 {truth}）")
+                    continue
+                both += 1
                 diff = _LEVEL_RANK[got] - _LEVEL_RANK[truth]
                 lvl_ok += diff == 0
-                miss += diff < 0
-                false_alarm += diff > 0
+                under += diff < 0
+                over += diff > 0
                 if diff:
-                    notes.append(f"{short} {got}（應為 {truth}）")
+                    notes.append(f"{short} {'低估' if diff < 0 else '高估'} {got}（應為 {truth}）")
 
         v_text = f"{v_ok}/{v_n}" if v_n else "-"
-        print(f"{arm:<10}{v_text:>8}{f'{lvl_ok}/{n}':>8}{miss:>6}{false_alarm:>6}   {'；'.join(notes)}")
+        print(
+            f"{arm:<10}{v_text:>8}{f'{miss}/{should}':>8}{f'{false_alarm}/{shouldnt}':>8}"
+            f"{f'{lvl_ok}/{both}':>8}{under:>6}{over:>6}{f'{notified}/{alerted}':>10}"
+        )
+        if args.details:
+            for note in notes:
+                print(f"    {note}")
 
 
 if __name__ == "__main__":
