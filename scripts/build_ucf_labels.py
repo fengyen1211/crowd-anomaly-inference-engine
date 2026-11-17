@@ -31,6 +31,12 @@ UCF 只有類別，沒有危險程度。_DANGER_BY_CATEGORY 是推論端自己�
 標準答案來源（同 非群聚資料_給推論端/README.md）：Fighting006、Assault005、
 Assault008 是影像端手標，其餘是 UCF-Crime 官方時段標註。
 
+第二批（2026-11-16）的標準答案在資料夾的 ranking.md，有的影片有兩段
+（例如 Vandalism036 18–26s、33–36s），用 --ranking 讀，代表幀落在任何一段
+內就算 yes：
+    python scripts/build_ucf_labels.py --events data/ucf_batch2_events.json \
+        --ranking <第二批資料夾>/ranking.md --output data/labels_ucf2_gt.json
+
 使用方式（在 project/ 目錄下執行）：
     python scripts/build_ucf_labels.py
     python scripts/evaluate_against_labels.py data/labels_ucf_gt.json \
@@ -42,15 +48,17 @@ import json
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 _PROJECT_DIR = Path(__file__).resolve().parent.parent
 _DEFAULT_EVENTS = _PROJECT_DIR / "data" / "ucf_noncluster_events.json"
 _DEFAULT_OUTPUT = _PROJECT_DIR / "data" / "labels_ucf_gt.json"
 _FPS = 30  # README：UCF 影片都是 30 fps，frame_XXXXX 編號 = 秒數 × 30
 
+Segments = List[Tuple[float, float]]
+
 # 標準答案時段（秒），抄自 非群聚資料_給推論端/README.md
-_GROUND_TRUTH: Dict[str, Tuple[float, float]] = {
+_GROUND_TRUTH_BATCH1: Dict[str, Tuple[float, float]] = {
     "Assault008": (3.0, 21.0),
     "Arrest001": (39.5, 49.5),
     "Fighting006": (15.0, 25.5),
@@ -73,9 +81,33 @@ _DANGER_BY_CATEGORY = {
     "Fighting": "danger",
     "Arrest": "attention",
     "Shoplifting": "attention",
+    # 第二批新增的類別
+    "Arson": "danger",
+    "Burglary": "attention",
+    "Vandalism": "attention",
 }
 
-_GROUP_RE = re.compile(r"^ucf_(.+)_during$")
+_GROUP_RE = re.compile(r"^ucf2?_(.+)_during$")
+_RANKING_SEGMENT_RE = re.compile(r"([\d.]+)-([\d.]+)")
+
+
+def _load_ranking(path: Path) -> Dict[str, Segments]:
+    """讀第二批 ranking.md 的「標準答案（秒）」欄；正常片（—）不列入。"""
+    truth: Dict[str, Segments] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 4 or not cells[0].isdigit():
+            continue
+        segments = [(float(a), float(b)) for a, b in _RANKING_SEGMENT_RE.findall(cells[3])]
+        if segments:
+            truth[cells[1]] = segments
+    if not truth:
+        raise SystemExit(f"{path} 裡讀不到任何標準答案時段")
+    return truth
+
+
+def _fmt(segments: Segments) -> str:
+    return "、".join(f"{a}–{b}s" for a, b in segments)
 
 
 def _video_of(record: dict) -> Optional[str]:
@@ -86,8 +118,14 @@ def _video_of(record: dict) -> Optional[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="UCF 標準答案時段 -> 每筆事件標註")
     parser.add_argument("--events", type=Path, default=_DEFAULT_EVENTS, help="build_tinyformer_events.py --ucf-root 的輸出")
+    parser.add_argument("--ranking", type=Path, help="第二批的 ranking.md；不給就用第一批寫死的時段")
     parser.add_argument("--output", type=Path, default=_DEFAULT_OUTPUT)
     args = parser.parse_args()
+
+    if args.ranking:
+        ground_truth = _load_ranking(args.ranking)
+    else:
+        ground_truth = {v: [seg] for v, seg in _GROUND_TRUTH_BATCH1.items()}
 
     records = json.loads(args.events.read_text(encoding="utf-8"))["records"]
 
@@ -96,14 +134,14 @@ def main() -> None:
     skipped = []
     for r in records:
         video = _video_of(r)
-        if video is None or video not in _GROUND_TRUTH:
+        if video is None or video not in ground_truth:
             skipped.append(r["record_id"])
             continue
-        start, end = _GROUND_TRUTH[video]
+        segments = ground_truth[video]
         category = re.sub(r"\d+$", "", video)
         frame = r["frame_idx"]
         sec = frame / _FPS
-        inside = start * _FPS <= frame <= end * _FPS
+        inside = any(start * _FPS <= frame <= end * _FPS for start, end in segments)
 
         labels.append({
             "record_id": r["record_id"],
@@ -113,7 +151,7 @@ def main() -> None:
             "danger": _DANGER_BY_CATEGORY.get(category, "attention") if inside else "none",
             "note": (
                 f"代表幀 frame {frame}（{sec:.1f}s）"
-                f"{'在' if inside else '不在'}標準答案 {start}–{end}s（{category}）內"
+                f"{'在' if inside else '不在'}標準答案 {_fmt(segments)}（{category}）內"
             ),
         })
         per_video[video]["yes" if inside else "no"] += 1
@@ -123,7 +161,9 @@ def main() -> None:
         json.dumps(
             {
                 "video": "ucf_noncluster",
-                "method": "auto from ground-truth time windows (README); representative frame inside window = occurred",
+                "method": "auto from ground-truth time windows "
+                          f"({args.ranking.name if args.ranking else 'README'}); "
+                          "representative frame inside any window = occurred",
                 "danger_by_category": _DANGER_BY_CATEGORY,
                 "labels": labels,
             },
@@ -133,11 +173,11 @@ def main() -> None:
         encoding="utf-8",
     )
 
-    print(f"{'影片':<16}{'標準答案(秒)':<14}{'在時段內':>8}{'時段外':>8}")
+    print(f"{'影片':<16}{'標準答案(秒)':<22}{'在時段內':>8}{'時段外':>8}")
     for video in sorted(per_video):
         c = per_video[video]
-        start, end = _GROUND_TRUTH[video]
-        print(f"{video:<16}{f'{start}-{end}':<14}{c['yes']:>8}{c['no']:>8}")
+        windows = ", ".join(f"{a}-{b}" for a, b in ground_truth[video])
+        print(f"{video:<16}{windows:<22}{c['yes']:>8}{c['no']:>8}")
     total = Counter()
     for c in per_video.values():
         total.update(c)
