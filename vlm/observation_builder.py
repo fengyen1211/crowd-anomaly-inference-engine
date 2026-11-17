@@ -129,6 +129,9 @@ def _is_refusal(text: str) -> bool:
 # 句子單位：以句號／驚嘆號／問號或換行結尾；num_predict 截斷時最後半句沒有句號，也算一個單位
 _UNIT_RE = re.compile(r"[^。！？\n]*[。！？]|[^。！？\n]+")
 _MAX_BLOCK_UNITS = 8
+# 比對前去掉的清單編號與 markdown 標記：「25. **櫃員**：…」「26. **櫃員**：…」
+# 只差在編號，要當成同一句
+_LIST_MARKER_RE = re.compile(r"^\s*(?:\d+\s*[.、)）]|[-*•])\s*")
 
 
 def _truncate_repetition(text: str) -> str:
@@ -153,8 +156,15 @@ def _truncate_repetition(text: str) -> str:
 
     同一句在不同段落各出現一次（例如事件前／後兩段都寫「櫃檯前的地板上
     鋪有彩色的地毯」）中間隔著別的句子，不是連續重複，不會被截掉。
+
+    比對時忽略清單編號與 ** 粗體：sweep_793568 的 ucf2_Arrest001_2328 把
+    「N. **櫃檯後方的櫃員**：櫃員正在櫃檯後方工作…」從 4. 一路寫到 30.，
+    每句只差在編號，原本被當成不同句子而沒截斷。
     """
-    units = [(m.start(), m.group().strip()) for m in _UNIT_RE.finditer(text)]
+    units = [
+        (m.start(), _LIST_MARKER_RE.sub("", m.group()).replace("*", "").strip())
+        for m in _UNIT_RE.finditer(text)
+    ]
     units = [u for u in units if u[1]]
     keys = [k for _, k in units]
     n = len(keys)
