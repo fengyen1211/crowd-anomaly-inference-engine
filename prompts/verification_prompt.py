@@ -47,6 +47,34 @@ _EVENT_TYPE_HINTS = {
              "只是快速移動、相向而行、靠近、交談或圍觀都不算",
 }
 
+# 場景異常模型（影像端第二批，CLIP L/14 + MIL）觸發的事件，類型是 scene_ 加上
+# 零樣本推測的類別。影像端說明「有異常」可靠、「是哪一種」常常不準（例如
+# Explosion007 被標成 scene_arson、scene_road_accident），所以說明寫成
+# 「畫面中有異常狀況」，推測類別只當參考。
+_SCENE_PREFIX = "scene_"
+_SCENE_HINT = (
+    "場景異常模型判斷畫面整體出現異常，推測類型是「{category}」，但推測類型常常不準；"
+    "請看描述中有沒有寫出異常狀況，例如火光、煙霧、爆炸、物品被破壞、有人持武器、"
+    "打鬥、搶奪或有人倒地，不限於推測的類型"
+)
+# 場景事件的 contradict 只留給明顯的偵測錯誤。sweep_792426（第二批，qwen2.5vl:3b）
+# 時段內 26 筆場景事件只有 1 筆描述提到火、煙、破壞這類字眼，真的爆炸、縱火
+# 大多被寫成「在購物」「在走動」，跟時段外的誤報（49 筆中 1 筆）分不開；
+# 若「只寫到一般活動」就判 contradict，真事件會跟誤報一起被撤回。
+_SCENE_CONTRADICT_RULE = (
+    "- contradict：只用在描述指出畫面是插圖、動畫或文字畫面，而不是真實的監視器場景。"
+    "描述只寫到一般活動（購物、辦公、走動、交談）時判 uncertain，不要判 contradict："
+    "視覺模型在低解析度的監視器畫面上常常看不出火光、煙霧或打鬥"
+)
+
+
+def _hint_for(event_type: str):
+    """事件類型的行為說明；場景事件依推測類別產生，未知類型回傳 None。"""
+    if event_type.startswith(_SCENE_PREFIX):
+        return _SCENE_HINT.format(category=event_type[len(_SCENE_PREFIX):])
+    return _EVENT_TYPE_HINTS.get(event_type)
+
+
 _INSTRUCTION = """影像分析系統判斷某個畫面中出現了「{event_type}」{hint_clause}。
 另一個視覺模型被要求只客觀描述同一畫面、不判斷是否同意，寫了以下描述：
 
@@ -88,9 +116,11 @@ class VerificationPromptBuilder:
 
     @classmethod
     def build(cls, event_type: str, description: str, variant: PromptVariant = "default") -> List[Dict[str, str]]:
-        hint = _EVENT_TYPE_HINTS.get(event_type)
+        hint = _hint_for(event_type)
         contradict_rule = _CONTRADICT_RULES[variant]
-        if variant == "contact":
+        if event_type.startswith(_SCENE_PREFIX):
+            contradict_rule = _SCENE_CONTRADICT_RULE
+        elif variant == "contact":
             contradict_rule += _CONTACT_EXCEPTIONS.get(event_type, "")
         content = _INSTRUCTION.format(
             contradict_rule=contradict_rule,

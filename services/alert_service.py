@@ -26,6 +26,7 @@ prompts/alert_prompt.py + LLM（那是「表達」而不是「決策」，
 應該是可選的加強，不應該取代這裡的規則判斷）。
 """
 
+from config.settings import get_settings
 from llm.schemas import AnalysisResult
 from utils.logger import get_logger
 from utils.schemas import Alert, AlertSeverity, PredictedEventType, RawEventRecord
@@ -38,6 +39,12 @@ logger = get_logger(__name__)
 # TinyFormer+SAM2 逐幀偵測格式輸出 "panic_scatter"——語意相同（人群
 # 突然加速、四散），但字串不同，比對時兩者都要算。
 _PANIC_EVENT_TYPES = {PredictedEventType.PANIC_DISPERSAL.value, "panic_scatter"}
+
+# 場景異常模型（影像端第二批）推測為爆炸、縱火、槍擊的事件：直接危及人身安全，
+# 跟恐慌性移動一樣發 critical。推測類別常常不準（Explosion007 被標成
+# scene_arson），但這三類在第二批 11 筆中有 7 筆落在標準答案時段內，是場景
+# 類型裡比例最高的。設定 SCENE_CRITICAL=false 可關掉。
+_CRITICAL_SCENE_TYPES = {"scene_explosion", "scene_arson", "scene_shooting"}
 
 
 class AlertComposerService:
@@ -171,7 +178,8 @@ def _severity(event_type: str, rejected: bool) -> AlertSeverity:
     純規則邏輯（信任影像端）：
     1. 驗證判 contradict（描述明顯是別的事）-> info
     2. 恐慌性移動（見 _PANIC_EVENT_TYPES）-> critical，影響人身安全風險最高
-    3. 其餘（support、uncertain）-> warning
+    3. 場景模型推測的爆炸、縱火、槍擊（見 _CRITICAL_SCENE_TYPES）-> critical
+    4. 其餘（support、uncertain）-> warning
 
     原本是「support 且信心 >= 0.6 才發」，uncertain 一律降成 info。1103 的
     離線重算（UCF 684501，99 筆）顯示這樣分不出真假：該通報的留下 18/47
@@ -186,6 +194,9 @@ def _severity(event_type: str, rejected: bool) -> AlertSeverity:
         return AlertSeverity.INFO
 
     if event_type in _PANIC_EVENT_TYPES:
+        return AlertSeverity.CRITICAL
+
+    if event_type in _CRITICAL_SCENE_TYPES and get_settings().scene_critical:
         return AlertSeverity.CRITICAL
 
     return AlertSeverity.WARNING

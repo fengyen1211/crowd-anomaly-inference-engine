@@ -103,6 +103,9 @@ class Settings(BaseSettings):
     # 預設 contact：verifiers_752027（UCF 98 筆）default 撤回錯 2 筆（真打架被
     # 寫成接吻、擁抱），contact 0 筆；obvious 一筆都沒擋對
     verifier_prompt: Literal["default", "contact", "obvious"] = "contact"
+    # 場景模型推測為爆炸、縱火、槍擊的事件發 critical（環境變數 SCENE_CRITICAL），
+    # 見 services/alert_service.py 的 _CRITICAL_SCENE_TYPES
+    scene_critical: bool = True
 
     # ---------- 文件切塊（Chunking）設定 ----------
     # 對應 rag/chunking/recursive_chunker.py 的預設值
