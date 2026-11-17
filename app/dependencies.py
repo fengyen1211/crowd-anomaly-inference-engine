@@ -35,6 +35,7 @@ from rag.visual_indexer import VisualEventIndexer
 from rag.visual_retriever import VisualSimilarityRetriever
 from services.analysis_store import InMemoryAnalysisStore
 from services.alert_service import AlertComposerService
+from services.alert_throttle import AlertThrottle
 from services.frame_filter import NonCameraFrameFilter
 from services.frame_service import FrameLoaderService
 from services.ingestion_service import IngestionService
@@ -220,6 +221,20 @@ def get_alert_service() -> AlertComposerService:
     return AlertComposerService()
 
 
+@lru_cache
+def get_alert_throttle() -> Optional[AlertThrottle]:
+    """
+    同一支攝影機的警報合併（見 services/alert_throttle.py）；ALERT_MERGE_SEC=0 時不合併。
+
+    用 lru_cache 共用同一份：get_orchestrator_service() 每個請求都會重新組一個
+    Orchestrator，合併狀態要跨請求保留。
+    """
+    settings = get_settings()
+    if settings.alert_merge_sec <= 0:
+        return None
+    return AlertThrottle(window_sec=settings.alert_merge_sec, fps=settings.video_fps)
+
+
 def get_reasoning_pipeline() -> ReasoningPipeline:
     """組裝 Reasoning Module（需要額外注入 LLM 實作）。"""
     return ReasoningPipeline(get_llm_client())
@@ -271,4 +286,5 @@ def get_orchestrator_service() -> OrchestratorService:
         alert_service=get_alert_service(),
         vlm_view=get_settings().vlm_view,
         frame_filter=frame_filter,
+        alert_throttle=get_alert_throttle(),
     )

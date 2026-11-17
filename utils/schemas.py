@@ -132,5 +132,8 @@ class Alert(BaseModel):
     full_report: str
     recommended_actions: List[str] = Field(default_factory=list)
     frame_file: str
+    # 同一支攝影機短時間內已經發過警報時，這則併入的那則警報的 record_id
+    # （前端更新既有警報、不另外通知），見 services/alert_throttle.py
+    merged_into: Optional[str] = None
 
     # TODO: 補上 alert_id、created_at、是否已讀/已處理 等欄位

@@ -34,3 +34,6 @@ class PipelineOutput(BaseModel):
     # 沒進入判斷流程的原因（例如畫面是插圖，見 services/frame_filter.py）；
     # 有值時 alert_level 固定 info，summary 就是這個原因
     skipped_reason: Optional[str] = None
+    # 併入同一支攝影機較早發出的警報時，那則警報的 record_id（不另外通知），
+    # 見 services/alert_throttle.py
+    merged_into: Optional[str] = None

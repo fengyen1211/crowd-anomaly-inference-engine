@@ -106,6 +106,11 @@ class Settings(BaseSettings):
     # 場景模型推測為爆炸、縱火、槍擊的事件發 critical（環境變數 SCENE_CRITICAL），
     # 見 services/alert_service.py 的 _CRITICAL_SCENE_TYPES
     scene_critical: bool = True
+    # 同一支攝影機上次發出警報後幾秒內、等級沒有更高的新警報併進既有警報、
+    # 不另外通知（環境變數 ALERT_MERGE_SEC，0 表示不合併），見
+    # services/alert_throttle.py；VIDEO_FPS 用來把 frame_idx 換成秒數
+    alert_merge_sec: float = 20.0
+    video_fps: float = 30.0
 
     # ---------- 文件切塊（Chunking）設定 ----------
     # 對應 rag/chunking/recursive_chunker.py 的預設值

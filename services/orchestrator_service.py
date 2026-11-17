@@ -44,6 +44,7 @@ from rag.schemas import RetrievedContext
 from rag.text_retriever import KnowledgeTextRetriever
 from rag.visual_retriever import VisualSimilarityRetriever
 from services.alert_service import AlertComposerService
+from services.alert_throttle import AlertThrottle
 from services.frame_filter import NonCameraFrameFilter
 from services.frame_service import FrameLoaderService
 from services.ingestion_service import IngestionService
@@ -71,6 +72,8 @@ class ObservationStage:
     verified_alert: Optional[Alert] = None
     # 被 NonCameraFrameFilter 略過時記原因，之後的步驟都不跑
     skipped_reason: Optional[str] = None
+    # 併入同一支攝影機較早發出的警報時，那則警報的 record_id（見 services/alert_throttle.py）
+    merged_into: Optional[str] = None
 
 
 class OrchestratorService:
@@ -96,6 +99,7 @@ class OrchestratorService:
         alert_service: AlertComposerService,
         vlm_view: str = "crop",
         frame_filter: Optional[NonCameraFrameFilter] = None,
+        alert_throttle: Optional[AlertThrottle] = None,
     ) -> None:
         self._ingestion_service = ingestion_service
         self._frame_service = frame_service
@@ -111,6 +115,9 @@ class OrchestratorService:
         self._vlm_view = vlm_view
         # None 表示不過濾（visual_embedding 不是 CLIP 時，見 app/dependencies.py）
         self._frame_filter = frame_filter
+        # None 表示每筆都另外發（ALERT_MERGE_SEC=0）。必須是跨請求共用的同一份
+        # 狀態，見 app/dependencies.py 的 get_alert_throttle()
+        self._alert_throttle = alert_throttle
 
     def process_event(
         self,
@@ -165,12 +172,17 @@ class OrchestratorService:
                 skipped_reason=skipped_reason,
             )
 
-        # 3. 初步警報：只看影像端的事件類型
+        # 3. 初步警報：只看影像端的事件類型；同一支攝影機剛發過警報就合併
+        preliminary_alert = self._alert_service.compose_preliminary(record)
+        merged_into = (
+            self._alert_throttle.decide(record, preliminary_alert.severity) if self._alert_throttle else None
+        )
         return ObservationStage(
             record=record,
             cropped_frame=cropped_frame,
             full_frame=full_frame,
-            preliminary_alert=self._alert_service.compose_preliminary(record),
+            preliminary_alert=self._alert_service.mark_merged(preliminary_alert, merged_into),
+            merged_into=merged_into,
         )
 
     def verify(self, stage: ObservationStage) -> ObservationStage:
@@ -201,6 +213,14 @@ class OrchestratorService:
 
         # 4c. 確認或撤回初步警報
         verified_alert = self._alert_service.compose_verified(record, vlm_observation, stage.preliminary_alert)
+        if (
+            self._alert_throttle is not None
+            and stage.merged_into is None
+            and verified_alert.severity != stage.preliminary_alert.severity
+        ):
+            # 這則警報被撤回了，之後的事件不要再併進來
+            self._alert_throttle.release(record)
+        verified_alert = self._alert_service.mark_merged(verified_alert, stage.merged_into)
         return replace(stage, vlm_observation=vlm_observation, verified_alert=verified_alert)
 
     def observe(self, raw_json: dict) -> ObservationStage:
@@ -253,7 +273,9 @@ class OrchestratorService:
         analysis_result = self._reasoning_pipeline.run(record, vlm_observation, retrieved_context)
 
         # 9. Alert：純規則邏輯依驗證結論決定警報等級（推論 LLM 的判定只寫進報告）
-        alert = self._alert_service.compose(record, analysis_result, vlm_observation)
+        alert = self._alert_service.mark_merged(
+            self._alert_service.compose(record, analysis_result, vlm_observation), stage.merged_into
+        )
 
         logger.info("Orchestrator 完成處理 record_id=%s alert_level=%s", record.record_id, alert.severity.value)
 
@@ -266,6 +288,7 @@ class OrchestratorService:
             alert_level=alert.severity,
             preliminary_alert_level=stage.preliminary_alert.severity,
             verification_verdict=vlm_observation.verification_verdict.value,
+            merged_into=stage.merged_into,
         )
 
     def _load_context_frames(self, record: RawEventRecord) -> Optional[List[bytes]]:

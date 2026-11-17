@@ -26,6 +26,8 @@ prompts/alert_prompt.py + LLM（那是「表達」而不是「決策」，
 應該是可選的加強，不應該取代這裡的規則判斷）。
 """
 
+from typing import Optional
+
 from config.settings import get_settings
 from llm.schemas import AnalysisResult
 from utils.logger import get_logger
@@ -151,6 +153,18 @@ class AlertComposerService:
             event_record.record_id, severity.value, tag,
         )
         return alert
+
+    @staticmethod
+    def mark_merged(alert: Alert, merged_into: Optional[str]) -> Alert:
+        """
+        標成併入同一支攝影機較早發出的警報（見 services/alert_throttle.py）：
+        標題加「合併」，前端據 merged_into 更新那則警報、不另外通知。
+        """
+        if merged_into is None:
+            return alert
+        return alert.model_copy(
+            update={"merged_into": merged_into, "title": alert.title.replace("]", "・合併]", 1)}
+        )
 
     def compose_skipped(self, event_record: RawEventRecord, reason: str) -> Alert:
         """畫面沒進入判斷流程（例如是插圖，見 services/frame_filter.py）時的初步警報，固定 info。"""
