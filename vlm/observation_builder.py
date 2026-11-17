@@ -23,6 +23,7 @@ prompt 也不告訴 VLM 系統判斷的事件類型：sweep_565835 裡 qwen2.5vl
 support。描述必須獨立於規則系統，驗證才有意義。
 """
 
+import re
 from typing import List, Optional
 
 from utils.schemas import RawEventRecord
@@ -125,35 +126,44 @@ def _is_refusal(text: str) -> bool:
     return len(text.strip()) < 120 and any(m in head for m in _REFUSAL_MARKERS)
 
 
-def _truncate_repetition(text: str, min_run: int = 3) -> str:
+# 句子單位：以句號／驚嘆號／問號或換行結尾；num_predict 截斷時最後半句沒有句號，也算一個單位
+_UNIT_RE = re.compile(r"[^。！？\n]*[。！？]|[^。！？\n]+")
+_MAX_BLOCK_UNITS = 8
+
+
+def _truncate_repetition(text: str) -> str:
     """
-    VLM 陷入重複迴圈時，從開始重複的地方截斷。
+    VLM 陷入重複迴圈時，從開始重複的地方截斷，保留第一份。
 
     num_predict 上限只保證會停下來，不保證內容可用：verifiers_565780 裡
     qwen2.5vl:7b 對 counter_flow 把「穿白色上衣的人在階梯上向右側移動」等
     幾行重複列了幾十次直到上限，下游驗證模型全都因為「有人往左、有人往右」
     判成 support。
 
-    判斷方式：某一行跟前面某一行相同，而且接下來連續 min_run 行都跟前面
-    那段一一相同，就視為進入迴圈。單獨一行重複（例如前後兩段都寫「環境
-    比較平靜」）不算，不會被截掉。
+    以「句子」為單位比對（句號、驚嘆號、問號或換行切開，空行忽略），找
+    連續重複的區塊：
+    - 1～2 句的區塊連續出現 3 次以上
+    - 3 句以上（最多 8 句）的區塊連續出現 2 次以上
+
+    舊版以「行」為單位、要求連續 3 行跟前面一一相同，sweep_752396／752397
+    的 118 筆描述裡有兩種迴圈抓不到：
+    - 同一行內重複：ucf_Assault005_crowd_locked 把同一句寫了 46 次，全在一行
+    - 段落之間隔空行：tinyformer7_crowd_locked_p1 的劇院段落重複 16 次，
+      空行讓「連續相同」的計數中斷
+
+    同一句在不同段落各出現一次（例如事件前／後兩段都寫「櫃檯前的地板上
+    鋪有彩色的地毯」）中間隔著別的句子，不是連續重複，不會被截掉。
     """
-    lines = text.split("\n")
-    seen = {}
-    for i, line in enumerate(lines):
-        key = line.strip()
-        if not key:
-            continue
-        for j in seen.get(key, []):
-            run = 0
-            while (
-                i + run < len(lines)
-                and j + run < i
-                and lines[i + run].strip()
-                and lines[i + run].strip() == lines[j + run].strip()
-            ):
-                run += 1
-            if run >= min_run:
-                return "\n".join(lines[:i]).rstrip()
-        seen.setdefault(key, []).append(i)
+    units = [(m.start(), m.group().strip()) for m in _UNIT_RE.finditer(text)]
+    units = [u for u in units if u[1]]
+    keys = [k for _, k in units]
+    n = len(keys)
+    for i in range(n):
+        for size in range(1, _MAX_BLOCK_UNITS + 1):
+            repeats = 3 if size < 3 else 2
+            if i + size * repeats > n:
+                break
+            block = keys[i:i + size]
+            if all(keys[i + r * size:i + (r + 1) * size] == block for r in range(1, repeats)):
+                return text[:units[i + size][0]].rstrip()
     return text
